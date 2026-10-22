@@ -125,6 +125,7 @@ async function process() {
   fd.append("out_format", transparent ? "png" : $("out-format").value);
   fd.append("jpeg_quality", "92");
   fd.append("rembg_model", $("rembg-model").value);
+  fd.append("plate_style", $("plate-style").value);
 
   $("btn-process").disabled = true;
   $("btn-download-all").hidden = true;
@@ -307,6 +308,7 @@ function openRetouch(jobId, r) {
     '<div id="rt-stage"></div>' +
     '<div class="rt-actions"><button id="rt-apply" class="btn primary">Appliquer le flou</button>' +
     '<button id="rt-reset" class="btn">Effacer les points</button>' +
+    '<select id="rt-style" class="rt-select"><option value="blur">Flou</option><option value="white">Rectangle blanc</option></select>' +
     '<span class="hint" id="rt-n">0 point</span>' +
     '<span class="hint">Double-conseil : 6 à 8 points suffisent autour de la plaque.</span></div>' +
     '</div>';
@@ -366,7 +368,7 @@ async function applyRetouch() {
     var res = await fetch("/api/retouch/" + rt.jobId + "/" + rt.index, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ polygon: rt.pts, strength: parseInt($("blur-strength").value, 10) || 3 })
+      body: JSON.stringify({ polygon: rt.pts, strength: parseInt($("blur-strength").value, 10) || 3, style: $("rt-style").value })
     });
     if (!res.ok) {
       var err = await res.json().catch(function () { return {}; });

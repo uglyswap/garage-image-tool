@@ -67,6 +67,7 @@ async def lifespan(_app: FastAPI):
     threading.Thread(target=jobs.cleanup_loop, daemon=True, name="cleanup").start()
     # Préchauffage : charge le modèle rembg dès le démarrage (évite ~20 s au 1er job)
     threading.Thread(target=lambda: _warm_rembg(), daemon=True, name="warm-rembg").start()
+    threading.Thread(target=_resume_interrupted_jobs, daemon=True, name="resume").start()
     logger.info("Garage Image Tool v%s prêt — moteur plaques : %s", config.VERSION, detector.engine)
     yield
 
@@ -79,6 +80,39 @@ def _warm_rembg() -> None:
         logger.info("Préchauffage rembg terminé")
     except Exception:  # noqa: BLE001
         logger.exception("Préchauffage rembg échoué (réessaie au 1er job)")
+
+
+def _resume_interrupted_jobs() -> None:
+    """Re-soumet les traitements interrompus par un redémarrage du conteneur."""
+    import time as _time
+
+    _time.sleep(4)  # laisse l application finir de démarrer
+    resumed = 0
+    for job, index, in_path, opts_dict, _jid in jobs.take_resume():
+        try:
+            opts_dict = dict(opts_dict or {})
+            bg_bytes = None
+            if opts_dict.get("bg_mode") == "replace":
+                bg = backgrounds.get(opts_dict.get("background_id", ""))
+                if bg:
+                    with open(backgrounds.path(bg), "rb") as f:
+                        bg_bytes = f.read()
+            clean = {k: v for k, v in opts_dict.items() if k != "background_id"}
+            options = ProcessOptions(**clean, background=bg_bytes)
+            with job.lock:
+                job.results[index].status = "pending"
+            executor.submit(_process_one, job, index, in_path, options)
+            resumed += 1
+        except Exception:  # noqa: BLE001
+            logger.exception("Reprise du job %s image %d impossible", job.id, index)
+            with job.lock:
+                try:
+                    job.results[index].status = "error"
+                    job.results[index].error = "Reprise impossible après redémarrage"
+                except Exception:  # noqa: BLE001
+                    pass
+    if resumed:
+        logger.info("Traitements repris après redémarrage : %d", resumed)
 
 
 app = FastAPI(title=config.APP_NAME, version=config.VERSION, lifespan=lifespan,
@@ -142,6 +176,7 @@ async def create_job(
     out_format: str = Form("jpeg"),
     jpeg_quality: int = Form(92),
     rembg_model: str = Form("birefnet-general-lite"),
+    plate_style: str = Form("blur"),
 ):
     if not files:
         raise HTTPException(400, "Aucune image reçue")
@@ -153,6 +188,8 @@ async def create_job(
         raise HTTPException(400, "Format de sortie invalide")
     if rembg_model not in (config.REMBG_MODEL, config.REMBG_MAX_MODEL):
         raise HTTPException(400, "Modèle de détourage invalide")
+    if plate_style not in ("blur", "white"):
+        raise HTTPException(400, "Style de plaque invalide")
 
     bg_bytes = None
     if bg_mode == "replace":
@@ -183,6 +220,7 @@ async def create_job(
             out_format=out_format,
             jpeg_quality=jpeg_quality,
             rembg_model=rembg_model,
+            plate_style=plate_style,
         ))
     return {"job_id": job.id, "total": job.total}
 
@@ -289,8 +327,11 @@ def retouch_result(job_id: str, index: int, payload: dict = Body(...)):
     path = os.path.join(jobs.job_dir(job_id), item.out_file)
     with open(path, "rb") as f:
         data = f.read()
+    style = payload.get("style", "blur")
+    if style not in ("blur", "white"):
+        style = "blur"
     fmt = "png" if item.out_file.endswith(".png") else "jpeg"
-    new_data, _ = retouch_bytes(data, pts, strength, fmt)
+    new_data, _ = retouch_bytes(data, pts, strength, fmt, style)
     with open(path, "wb") as f:
         f.write(new_data)
     return {"ok": True, "url": "/api/results/" + job_id + "/" + str(index)}

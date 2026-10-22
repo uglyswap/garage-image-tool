@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      MAX_WORKERS: "2"          # workers CPU paralleles (rembg/onnxruntime)
+      MAX_WORKERS: "1"          # workers CPU paralleles (rembg/onnxruntime)
       DATA_DIR: /data
       MODELS_DIR: /app/models
     volumes:

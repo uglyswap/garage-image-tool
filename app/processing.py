@@ -75,6 +75,7 @@ class ProcessOptions:
     out_format: str = "jpeg"         # jpeg | png (forcé PNG si transparent)
     jpeg_quality: int = 92
     rembg_model: str = "isnet-general-use"  # isnet-general-use | birefnet-general-lite
+    plate_style: str = "blur"        # blur | white
 
 
 @dataclass
@@ -125,7 +126,10 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
                 roi_alpha = alpha_arr[box.y1 : box.y2, box.x1 : box.x2]
                 if roi_alpha.size and float(roi_alpha.mean()) < 30:
                     continue
-            _blur_plate(bgr2, box, opts.blur_strength)
+            if opts.plate_style == "white":
+                _white_plate(bgr2, box)
+            else:
+                _blur_plate(bgr2, box, opts.blur_strength)
             blurred += 1
         out_img = Image.fromarray(cv2.cvtColor(bgr2, cv2.COLOR_BGR2RGB))
         if alpha_arr is not None:
@@ -142,6 +146,17 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
 
 
 # ---------------------------------------------------------------------
+def _white_plate(arr_bgr, box):
+    """Remplace la plaque par un rectangle blanc propre."""
+    h, w = arr_bgr.shape[:2]
+    pad = max(2, min(6, int((box.y2 - box.y1) * 0.06)))
+    x1, y1 = max(0, box.x1 - pad), max(0, box.y1 - pad)
+    x2, y2 = min(w, box.x2 + pad), min(h, box.y2 + pad)
+    if x2 - x1 < 4 or y2 - y1 < 4:
+        return
+    arr_bgr[y1:y2, x1:x2] = (250, 250, 250)
+
+
 def _blur_polygon(arr_bgr, pts, strength):
     """Flou (pixelisation + gaussien) a l interieur d un polygone, bords adoucis."""
     mask = np.zeros(arr_bgr.shape[:2], dtype=np.uint8)
@@ -175,13 +190,17 @@ def _blur_polygon(arr_bgr, pts, strength):
     arr_bgr[y1:y2, x1:x2] = blended.astype(np.uint8)
 
 
-def retouch_bytes(data: bytes, pts, strength: int = 3, fmt: str = "jpeg"):
-    """Applique le flou polygonal sur une image encodee, renvoie (bytes, fmt)."""
+def retouch_bytes(data: bytes, pts, strength: int = 3, fmt: str = "jpeg", style: str = "blur"):
+    """Applique la retouche polygonale (flou ou blanc) sur une image encodee."""
     arr = np.frombuffer(data, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError("image illisible")
-    _blur_polygon(img, [list(p) for p in pts], strength)
+    if style == "white":
+        poly = np.array([list(p) for p in pts], dtype=np.int32)
+        cv2.fillPoly(img, [poly], (250, 250, 250))
+    else:
+        _blur_polygon(img, [list(p) for p in pts], strength)
     ext = ".jpg" if fmt == "jpeg" else ".png"
     params = [cv2.IMWRITE_JPEG_QUALITY, 92] if fmt == "jpeg" else []
     ok, buf = cv2.imencode(ext, img, params)

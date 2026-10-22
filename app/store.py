@@ -1,7 +1,9 @@
-"""Persistance légère : arrière-plans (JSON + fichiers) et jobs (mémoire + disque).
+"""Persistance légère : arrière-plans (JSON + fichiers) et jobs (disque + mémoire).
 
 - Arrière-plans : persistés sur disque (volume Docker /data), survivent aux redémarrages.
-- Jobs : en mémoire + fichiers temporaires, nettoyés automatiquement après TTL.
+- Jobs : fichiers sur disque + métadonnées persistées (status.json) → les liens de
+  téléchargement survivent aux redémarrages, et les traitements interrompus sont
+  automatiquement repris au démarrage.
 """
 from __future__ import annotations
 
@@ -113,6 +115,7 @@ class Job:
     done: int = 0
     status: str = "processing"   # processing | done
     results: list[ResultItem] = field(default_factory=list)
+    opts: dict = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -122,14 +125,17 @@ class JobStore:
         self.ttl = ttl_minutes * 60
         self._lock = threading.Lock()
         self._jobs: dict[str, Job] = {}
+        self._resume: list[tuple[Job, int, str, dict, str]] = []
 
-    def create(self, names: list[str]) -> Job:
+    def create(self, names: list[str], opts: dict = None) -> Job:
         job_id = uuid.uuid4().hex[:12]
         job = Job(job_id, time.time(), len(names),
-                  results=[ResultItem(i, n) for i, n in enumerate(names)])
+                  results=[ResultItem(i, n) for i, n in enumerate(names)],
+                  opts=opts or {})
         with self._lock:
             self._jobs[job_id] = job
         os.makedirs(self.job_dir(job_id), exist_ok=True)
+        self.save_status(job)
         return job
 
     def job_dir(self, job_id: str) -> str:
@@ -142,7 +148,7 @@ class JobStore:
         with job.lock:
             data = {
                 "id": job.id, "created": job.created, "total": job.total,
-                "done": job.done, "status": job.status,
+                "done": job.done, "status": job.status, "opts": job.opts,
                 "results": [{"index": r.index, "name": r.name, "status": r.status,
                              "error": r.error, "plates": r.plates,
                              "out_file": r.out_file, "out_name": r.out_name}
@@ -155,8 +161,8 @@ class JobStore:
         os.replace(tmp, path)
 
     def reload_from_disk(self) -> int:
-        """Recharge les jobs apres un redemarrage : les liens de telechargement survivent.
-        Les anciens jobs (sans status.json) sont reconstruits depuis leurs fichiers."""
+        """Recharge les jobs après un redémarrage : les liens de téléchargement
+        survivent, et les traitements non terminés sont remis en file de reprise."""
         if not os.path.isdir(self.dir):
             return 0
         count = 0
@@ -167,15 +173,35 @@ class JobStore:
                 try:
                     with open(sj, encoding="utf-8") as f:
                         d = json.load(f)
-                    job = Job(d["id"], d["created"], d["total"], done=d["done"],
-                              status=d["status"],
-                              results=[ResultItem(**r) for r in d["results"]])
+                    results = [ResultItem(**r) for r in d.get("results", [])]
+                    opts = d.get("opts", {}) or {}
+                    done = 0
+                    resumed = False
+                    for r in results:
+                        if r.status == "done":
+                            done += 1
+                            continue
+                        in_path = os.path.join(jd, "in_" + str(r.index))
+                        if os.path.isfile(in_path):
+                            r.status = "pending"
+                            self._resume.append((None, r.index, in_path, dict(opts), job_id))
+                            resumed = True
+                        else:
+                            r.status = "error"
+                            r.error = "Interrompu par un redémarrage"
+                    status = "processing" if resumed else d.get("status", "done")
+                    job = Job(d["id"], d["created"], d["total"],
+                              done=done, status=status,
+                              results=results, opts=opts)
+                    if resumed:
+                        job.done = done
                     with self._lock:
                         self._jobs[job.id] = job
                     count += 1
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Rechargement job %s impossible : %s", job_id, exc)
                 continue
+            # Backfill : jobs antérieurs sans status.json (fichiers présents)
             outs = sorted(glob.glob(os.path.join(jd, "out_*")))
             if not outs:
                 continue
@@ -196,9 +222,22 @@ class JobStore:
             with self._lock:
                 self._jobs[job.id] = job
             count += 1
-        if count:
-            logger.info("Jobs recharges depuis le disque : %d", count)
+        if count or self._resume:
+            logger.info("Jobs rechargés depuis le disque : %d (%d à reprendre)",
+                        count, len(self._resume))
         return count
+
+    def take_resume(self) -> list[tuple[str, int, str, dict, str]]:
+        """Renvoie les traitements à reprendre : (job_id, index, in_path, opts, job_id)."""
+        with self._lock:
+            rq = self._resume
+            self._resume = []
+        fixed = []
+        for (_, index, in_path, opts, job_id) in rq:
+            job = self._jobs.get(job_id)
+            if job:
+                fixed.append((job, index, in_path, opts, job_id))
+        return fixed
 
     def cleanup_loop(self) -> None:
         """Supprime les jobs (et leurs fichiers) après expiration du TTL."""
