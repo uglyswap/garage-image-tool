@@ -142,6 +142,54 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
 
 
 # ---------------------------------------------------------------------
+def _blur_polygon(arr_bgr, pts, strength):
+    """Flou (pixelisation + gaussien) a l interieur d un polygone, bords adoucis."""
+    mask = np.zeros(arr_bgr.shape[:2], dtype=np.uint8)
+    poly = np.array(pts, dtype=np.int32)
+    cv2.fillPoly(mask, [poly], 255)
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=3)
+    m = (mask.astype(np.float32) / 255.0)[..., np.newaxis]
+    xs = poly[:, 0]
+    ys = poly[:, 1]
+    pad = 8
+    x1 = max(0, int(xs.min()) - pad)
+    y1 = max(0, int(ys.min()) - pad)
+    x2 = min(arr_bgr.shape[1], int(xs.max()) + pad)
+    y2 = min(arr_bgr.shape[0], int(ys.max()) + pad)
+    if x2 - x1 < 4 or y2 - y1 < 4:
+        return
+    strength = max(1, min(5, int(strength)))
+    bh = y2 - y1
+    block = max(5, int(round(bh / (8.0 - strength))))
+    k = max(3, (bh // 4) | 1)
+    roi = arr_bgr[y1:y2, x1:x2]
+    blurred = cv2.GaussianBlur(roi, (k, k), 0)
+    rh, rw = roi.shape[:2]
+    small = cv2.resize(roi, (max(1, rw // block), max(1, rh // block)), interpolation=cv2.INTER_LINEAR)
+    pixelated = cv2.resize(small, (rw, rh), interpolation=cv2.INTER_NEAREST)
+    mixed = cv2.addWeighted(blurred, 0.5, pixelated, 0.5, 0)
+    mixed = (mixed.astype(np.float32) * 0.94).astype(np.uint8)
+    sub = m[y1:y2, x1:x2]
+    region = roi.astype(np.float32)
+    blended = region * (1.0 - sub) + mixed.astype(np.float32) * sub
+    arr_bgr[y1:y2, x1:x2] = blended.astype(np.uint8)
+
+
+def retouch_bytes(data: bytes, pts, strength: int = 3, fmt: str = "jpeg"):
+    """Applique le flou polygonal sur une image encodee, renvoie (bytes, fmt)."""
+    arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("image illisible")
+    _blur_polygon(img, [list(p) for p in pts], strength)
+    ext = ".jpg" if fmt == "jpeg" else ".png"
+    params = [cv2.IMWRITE_JPEG_QUALITY, 92] if fmt == "jpeg" else []
+    ok, buf = cv2.imencode(ext, img, params)
+    if not ok:
+        raise ValueError("encodage impossible")
+    return buf.tobytes(), fmt
+
+
 def _bottom_align_offset(rgba: Image.Image):
     """Decalage pour poser le bas du vehicule sur le bas de l image, centre horizontalement."""
     a = np.array(rgba.getchannel("A"))

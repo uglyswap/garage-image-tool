@@ -122,3 +122,16 @@ footer {
   padding: 14px 22px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px;
 }
 footer a { color: var(--accent-2); text-decoration: none; }
+#rt-overlay {
+  position: fixed; inset: 0; background: rgba(5, 8, 14, .88);
+  display: flex; align-items: center; justify-content: center; z-index: 50; padding: 18px;
+}
+.rt-box { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; max-width: 94vw; max-height: 94vh; display: flex; flex-direction: column; gap: 10px; }
+.rt-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
+.rt-head button { border: none; background: var(--panel-2); color: var(--text); border-radius: 8px; width: 26px; height: 26px; cursor: pointer; }
+#rt-stage { position: relative; display: inline-block; overflow: auto; max-width: 100%; }
+#rt-img { display: block; max-width: 100%; max-height: 70vh; }
+#rt-canvas { position: absolute; inset: 0; cursor: crosshair; }
+.rt-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.r-rt { border: none; background: var(--accent); color: #161004; font-weight: 700; border-radius: 8px; padding: 7px 9px; cursor: pointer; font-size: 12px; flex-shrink: 0; }
+.r-rt:hover { filter: brightness(1.12); }

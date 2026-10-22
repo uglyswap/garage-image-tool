@@ -210,10 +210,13 @@ function renderResults(j) {
         ? '<img class="r-thumb" src="' + r.url + '" alt="">'
         : '<div class="r-ph">' + ph + "</div>") +
       '<div class="r-info"><div class="r-name">' + esc(r.name) + '</div><div class="r-meta">' + meta + "</div></div>" +
-      (r.status === "done" ? '<button class="r-dl">⬇️</button>' : "");
+      (r.status === "done" ? '<button class="r-dl">⬇️</button><button class="r-rt" title="Retouche manuelle">✏️</button>' : "");
     if (r.status === "done") {
       el.querySelector(".r-dl").addEventListener("click", function () {
         downloadOne(r);
+      });
+      el.querySelector(".r-rt").addEventListener("click", function () {
+        openRetouch(state.jobId, r);
       });
     }
   });
@@ -288,6 +291,93 @@ function wire() {
   $("btn-process").addEventListener("click", process);
   $("btn-download-all").addEventListener("click", downloadAll);
   $("btn-reset").addEventListener("click", reset);
+}
+
+/* ------------------------- Retouche manuelle ------------------------------- */
+var rt = { jobId: null, index: null, pts: [], scale: 1 };
+
+function openRetouch(jobId, r) {
+  if (!jobId) { alert("Retouche indisponible sur ce resultat."); return; }
+  rt.jobId = jobId; rt.index = r.index; rt.pts = [];
+  var ov = document.createElement("div");
+  ov.id = "rt-overlay";
+  ov.innerHTML = '<div class="rt-box">' +
+    '<div class="rt-head">✏️ Retouche — cliquez les points autour de la plaque (octogone), puis Appliquer' +
+    '<button id="rt-close" title="Fermer">✕</button></div>' +
+    '<div id="rt-stage"></div>' +
+    '<div class="rt-actions"><button id="rt-apply" class="btn primary">Appliquer le flou</button>' +
+    '<button id="rt-reset" class="btn">Effacer les points</button>' +
+    '<span class="hint" id="rt-n">0 point</span>' +
+    '<span class="hint">Double-conseil : 6 à 8 points suffisent autour de la plaque.</span></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  var im = document.createElement("img");
+  im.id = "rt-img";
+  im.src = r.url + "?t=" + Date.now();
+  $("rt-stage").appendChild(im);
+  var cv = document.createElement("canvas");
+  cv.id = "rt-canvas";
+  $("rt-stage").appendChild(cv);
+  im.onload = function () {
+    cv.width = im.clientWidth; cv.height = im.clientHeight;
+    rt.scale = im.naturalWidth / im.clientWidth;
+    drawRtPts();
+  };
+  cv.addEventListener("click", function (ev) {
+    var rect = cv.getBoundingClientRect();
+    rt.pts.push([Math.round((ev.clientX - rect.left) * rt.scale), Math.round((ev.clientY - rect.top) * rt.scale)]);
+    drawRtPts();
+  });
+  $("rt-apply").addEventListener("click", applyRetouch);
+  $("rt-reset").addEventListener("click", function () { rt.pts = []; drawRtPts(); });
+  $("rt-close").addEventListener("click", closeRetouch);
+}
+
+function drawRtPts() {
+  var cv = $("rt-canvas");
+  if (!cv) return;
+  var ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 2; ctx.fillStyle = "#fbbf24";
+  var i, p, x, y;
+  for (i = 0; i < rt.pts.length; i++) {
+    p = rt.pts[i]; x = p[0] / rt.scale; y = p[1] / rt.scale;
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.3); ctx.fill();
+  }
+  if (rt.pts.length > 1) {
+    ctx.beginPath();
+    for (i = 0; i < rt.pts.length; i++) {
+      p = rt.pts[i]; x = p[0] / rt.scale; y = p[1] / rt.scale;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.stroke();
+  }
+  $("rt-n").textContent = rt.pts.length + " point(s)";
+}
+
+function closeRetouch() {
+  var ov = $("rt-overlay");
+  if (ov) ov.remove();
+}
+
+async function applyRetouch() {
+  if (rt.pts.length < 3) { alert("Placez au moins 3 points autour de la plaque."); return; }
+  try {
+    var res = await fetch("/api/retouch/" + rt.jobId + "/" + rt.index, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ polygon: rt.pts, strength: parseInt($("blur-strength").value, 10) || 3 })
+    });
+    if (!res.ok) {
+      var err = await res.json().catch(function () { return {}; });
+      throw new Error(err.detail || ("HTTP " + res.status));
+    }
+    closeRetouch();
+    var el = document.querySelector("#res-" + rt.index + " .r-thumb");
+    if (el) el.src = el.src.split("?")[0] + "?t=" + Date.now();
+  } catch (e) {
+    alert("Erreur : " + e.message);
+  }
 }
 
 init();

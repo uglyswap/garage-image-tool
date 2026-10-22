@@ -20,12 +20,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from .processing import ProcessOptions, process_image
+from .processing import ProcessOptions, process_image, retouch_bytes
 from .plate_detector import detector
 from .store import BackgroundStore, JobStore
 
@@ -256,6 +256,44 @@ def result_file(job_id: str, index: int, download: int = 0):
             'attachment; filename="' + ascii_name + '"; ' + "filename*=UTF-8'" + quote(name)
         )
     return FileResponse(path, media_type=media, headers=headers)
+
+
+# ------------------------- Retouche manuelle ------------------------------
+@app.post("/api/retouch/{job_id}/{index}")
+def retouch_result(job_id: str, index: int, payload: dict = Body(...)):
+    """Floute l interieur d un polygone dessine par l utilisateur (coordonnees
+    en pixels de l image pleine resolution)."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job introuvable")
+    if index < 0 or index >= len(job.results):
+        raise HTTPException(404, "Resultat introuvable")
+    item = job.results[index]
+    if item.status != "done" or not item.out_file:
+        raise HTTPException(404, "Resultat non pret")
+    polygon = payload.get("polygon") or []
+    pts = []
+    for p in polygon:
+        try:
+            pts.append([int(round(float(p[0]))), int(round(float(p[1])))])
+        except Exception:  # noqa: BLE001
+            continue
+    if len(pts) < 3:
+        raise HTTPException(400, "Polygone invalide (3 points minimum)")
+    if len(pts) > 64:
+        raise HTTPException(400, "Trop de points (64 maximum)")
+    try:
+        strength = max(1, min(5, int(payload.get("strength", 3))))
+    except Exception:  # noqa: BLE001
+        strength = 3
+    path = os.path.join(jobs.job_dir(job_id), item.out_file)
+    with open(path, "rb") as f:
+        data = f.read()
+    fmt = "png" if item.out_file.endswith(".png") else "jpeg"
+    new_data, _ = retouch_bytes(data, pts, strength, fmt)
+    with open(path, "wb") as f:
+        f.write(new_data)
+    return {"ok": True, "url": "/api/results/" + job_id + "/" + str(index)}
 
 
 # ----------------------------- Frontend statique --------------------------
