@@ -18,6 +18,7 @@ MAX_FILE_MB = int(os.environ.get("MAX_FILE_MB", "25"))
 MAX_FILES = int(os.environ.get("MAX_FILES", "60"))
 JOB_TTL_MINUTES = int(os.environ.get("JOB_TTL_MINUTES", "120"))
 PLATE_CONF_THRESHOLD = float(os.environ.get("PLATE_CONF_THRESHOLD", "0.35"))
+REMBG_MODEL = os.environ.get("REMBG_MODEL", "isnet-general-use")  # u2net = repli rapide
 PLATE_SMALL_PASS = os.environ.get("PLATE_SMALL_PASS", "1") == "1"  # 2e passe tuiles x2 (petites plaques)
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}

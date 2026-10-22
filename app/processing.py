@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+from . import config
 from .plate_detector import PlateBox, detector
 
 logger = logging.getLogger(__name__)
@@ -23,16 +24,42 @@ _rembg_session = None
 
 
 def _get_rembg_session():
-    """Session rembg U2-Net, initialisée une seule fois (lazy)."""
+    """Session rembg ISNet (qualité supérieure), repli u2net, initialisée une seule fois."""
     global _rembg_session
     if _rembg_session is None:
         with _session_lock:
             if _rembg_session is None:
                 from rembg import new_session
 
-                _rembg_session = new_session("u2net")
-                logger.info("Session rembg u2net initialisée")
+                try:
+                    _rembg_session = new_session(config.REMBG_MODEL)
+                    logger.info("Session rembg %s initialisée", config.REMBG_MODEL)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Modèle %s indisponible, repli u2net", config.REMBG_MODEL)
+                    _rembg_session = new_session("u2net")
     return _rembg_session
+
+
+def _drop_small_islands(rgba: Image.Image, keep_ratio: float = 0.15) -> Image.Image:
+    """Supprime les petits fragments flottants du masque alpha.
+
+    Ne garde que la composante connexe principale (le véhicule) et les îles
+    secondaires représentant au moins keep_ratio de son aire (remorque...)."""
+    arr = np.array(rgba.getchannel("A"))
+    mask = (arr > 25).astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 2:
+        return rgba
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    main_label = int(areas.argmax()) + 1
+    main_area = int(areas.max())
+    keep = {main_label}
+    for i in range(1, n):
+        if i != main_label and int(areas[i - 1]) >= keep_ratio * main_area:
+            keep.add(i)
+    cleaned = np.where(np.isin(labels, list(keep)), arr, 0).astype(np.uint8)
+    rgba.putalpha(Image.fromarray(cleaned))
+    return rgba
 
 
 @dataclass
@@ -100,7 +127,7 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
 def _remove_background(image: Image.Image) -> Image.Image:
     from rembg import remove
 
-    return remove(image, session=_get_rembg_session(), post_process_mask=True)
+    return _drop_small_islands(remove(image, session=_get_rembg_session(), post_process_mask=True))
 
 
 def _load_background(bg_bytes: bytes, size: tuple[int, int]) -> Image.Image:

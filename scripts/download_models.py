@@ -19,6 +19,7 @@ PLATE_URLS = [
     "https://huggingface.co/ml-debi/yolov8-license-plate-detection/resolve/main/best.onnx",
 ]
 U2NET_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
+ISNET_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx"  # modèle principal détourage
 
 
 def fetch(url: str, dest: str, min_bytes: int, attempts: int = 3) -> None:
@@ -68,6 +69,12 @@ def main() -> int:
                 print("[download] source echouee, essai suivant...", file=sys.stderr, flush=True)
         if last_err:
             raise last_err
+
+    isnet = os.path.join(MODELS_DIR, "isnet-general-use.onnx")
+    if os.path.isfile(isnet) and os.path.getsize(isnet) > 150_000_000:
+        print("[download] isnet-general-use.onnx deja present")
+    else:
+        fetch(ISNET_URL, isnet, 150_000_000)
 
     if os.path.isfile(u2net) and os.path.getsize(u2net) > 150_000_000:
         print("[download] u2net.onnx deja present")
