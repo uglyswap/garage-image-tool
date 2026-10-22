@@ -310,7 +310,7 @@ function openRetouch(jobId, r) {
     '<button id="rt-reset" class="btn">Effacer les points</button>' +
     '<select id="rt-style" class="rt-select"><option value="blur">Flou</option><option value="white">Rectangle blanc</option></select>' +
     '<span class="hint" id="rt-n">0 point</span>' +
-    '<span class="hint">Double-conseil : 6 à 8 points suffisent autour de la plaque.</span></div>' +
+    '<span class="hint">3 à 8 points — 4 points suffisent pour un rectangle incliné.</span></div>' +
     '</div>';
   document.body.appendChild(ov);
   var im = document.createElement("img");
