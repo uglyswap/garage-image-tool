@@ -97,15 +97,20 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
 
     alpha_arr = None
     cutout = None
+    dx, dy = 0, 0
     if opts.bg_mode in ("transparent", "replace"):
         cutout = _remove_background(image, opts.rembg_model)
-        alpha_arr = np.asarray(cutout.getchannel("A"))
+        dx, dy = _bottom_align_offset(cutout)
+        shifted = Image.new("RGBA", cutout.size, (0, 0, 0, 0))
+        shifted.paste(cutout, (dx, dy), cutout)
+        alpha_arr = np.asarray(shifted.getchannel("A"))
+        plates = [PlateBox(b.x1 + dx, b.y1 + dy, b.x2 + dx, b.y2 + dy, b.score) for b in plates]
 
     if opts.bg_mode == "transparent":
-        out_img = cutout
+        out_img = shifted
     elif opts.bg_mode == "replace" and opts.background:
         bg = _load_background(opts.background, image.size)
-        out_img = Image.alpha_composite(bg.convert("RGBA"), cutout)
+        out_img = Image.alpha_composite(bg.convert("RGBA"), shifted)
     else:
         out_img = image.copy()
 
@@ -137,6 +142,23 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
 
 
 # ---------------------------------------------------------------------
+def _bottom_align_offset(rgba: Image.Image):
+    """Decalage pour poser le bas du vehicule sur le bas de l image, centre horizontalement."""
+    a = np.array(rgba.getchannel("A"))
+    ys, xs = np.nonzero(a > 25)
+    W, H = rgba.size
+    if len(ys) == 0:
+        return 0, 0
+    x1, x2 = int(xs.min()), int(xs.max())
+    y2 = int(ys.max())
+    car_w = x2 - x1 + 1
+    dx = (W - car_w) // 2 - x1
+    dy = (H - 1) - y2
+    if car_w >= W:
+        dx = -x1
+    return dx, dy
+
+
 def _remove_background(image: Image.Image, model: str = None) -> Image.Image:
     from rembg import remove
 

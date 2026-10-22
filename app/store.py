@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
@@ -136,6 +137,68 @@ class JobStore:
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
+
+    def save_status(self, job: Job) -> None:
+        with job.lock:
+            data = {
+                "id": job.id, "created": job.created, "total": job.total,
+                "done": job.done, "status": job.status,
+                "results": [{"index": r.index, "name": r.name, "status": r.status,
+                             "error": r.error, "plates": r.plates,
+                             "out_file": r.out_file, "out_name": r.out_name}
+                            for r in job.results],
+            }
+        path = os.path.join(self.job_dir(job.id), "status.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, path)
+
+    def reload_from_disk(self) -> int:
+        """Recharge les jobs apres un redemarrage : les liens de telechargement survivent.
+        Les anciens jobs (sans status.json) sont reconstruits depuis leurs fichiers."""
+        if not os.path.isdir(self.dir):
+            return 0
+        count = 0
+        for job_id in os.listdir(self.dir):
+            jd = os.path.join(self.dir, job_id)
+            sj = os.path.join(jd, "status.json")
+            if os.path.isfile(sj):
+                try:
+                    with open(sj, encoding="utf-8") as f:
+                        d = json.load(f)
+                    job = Job(d["id"], d["created"], d["total"], done=d["done"],
+                              status=d["status"],
+                              results=[ResultItem(**r) for r in d["results"]])
+                    with self._lock:
+                        self._jobs[job.id] = job
+                    count += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Rechargement job %s impossible : %s", job_id, exc)
+                continue
+            outs = sorted(glob.glob(os.path.join(jd, "out_*")))
+            if not outs:
+                continue
+            results = []
+            for op in outs:
+                b = os.path.basename(op)
+                try:
+                    idx = int(b.split("_")[1].split(".")[0])
+                except ValueError:
+                    continue
+                results.append(ResultItem(index=idx, name="image-" + str(idx),
+                                          status="done", out_file=b, out_name=b))
+            if not results:
+                continue
+            results.sort(key=lambda r: r.index)
+            job = Job(job_id, os.path.getmtime(jd), len(results),
+                      done=len(results), status="done", results=results)
+            with self._lock:
+                self._jobs[job.id] = job
+            count += 1
+        if count:
+            logger.info("Jobs recharges depuis le disque : %d", count)
+        return count
 
     def cleanup_loop(self) -> None:
         """Supprime les jobs (et leurs fichiers) après expiration du TTL."""

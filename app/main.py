@@ -62,6 +62,8 @@ async def _read_limited(file: UploadFile, max_mb: int) -> bytes:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    config.ensure_dirs()
+    reloaded = jobs.reload_from_disk()
     threading.Thread(target=jobs.cleanup_loop, daemon=True, name="cleanup").start()
     # Préchauffage : charge le modèle rembg dès le démarrage (évite ~20 s au 1er job)
     threading.Thread(target=lambda: _warm_rembg(), daemon=True, name="warm-rembg").start()
@@ -139,7 +141,7 @@ async def create_job(
     blur_strength: int = Form(3),
     out_format: str = Form("jpeg"),
     jpeg_quality: int = Form(92),
-    rembg_model: str = Form("isnet-general-use"),
+    rembg_model: str = Form("birefnet-general-lite"),
 ):
     if not files:
         raise HTTPException(400, "Aucune image reçue")
@@ -168,6 +170,7 @@ async def create_job(
         payloads.append((up.filename or "image", await _read_limited(up, config.MAX_FILE_MB)))
 
     job = jobs.create([name for name, _ in payloads])
+    jobs.save_status(job)
     for i, (_name, data) in enumerate(payloads):
         in_path = os.path.join(jobs.job_dir(job.id), "in_" + str(i))
         with open(in_path, "wb") as fh:
@@ -209,6 +212,7 @@ def _process_one(job, index: int, in_path: str, opts: ProcessOptions) -> None:
             job.done += 1
             if job.done >= job.total:
                 job.status = "done"
+        jobs.save_status(job)
 
 
 @app.get("/api/jobs/{job_id}")
