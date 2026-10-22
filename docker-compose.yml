@@ -1,0 +1,17 @@
+services:
+  garage-image-tool:
+    build: .
+    image: garage-image-tool:latest
+    container_name: garage-image-tool
+    ports:
+      - "8000:8000"
+    environment:
+      MAX_WORKERS: "2"          # workers CPU paralleles (rembg/onnxruntime)
+      DATA_DIR: /data
+      MODELS_DIR: /app/models
+    volumes:
+      - garage-data:/data       # fonds enregistres + resultats temporaires
+    restart: unless-stopped
+
+volumes:
+  garage-data:

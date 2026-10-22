@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garage Image Tool — Retouche photo pour garages</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo">🛠️</span> <strong>Garage Image Tool</strong> <span id="version" class="tag"></span></div>
+  <div id="engine-badge" class="badge">Chargement…</div>
+</header>
+<main>
+  <aside class="panel">
+    <h2>Arrière-plans</h2>
+    <div id="bg-list" class="bg-list"></div>
+    <label class="btn small" for="bg-input">＋ Ajouter un fond</label>
+    <input type="file" id="bg-input" accept="image/jpeg,image/png,image/webp" hidden>
+    <p class="hint">Cliquez sur un fond pour le sélectionner. Les fonds ajoutés sont enregistrés sur le serveur et restent disponibles d'une session à l'autre.</p>
+  </aside>
+  <section class="workspace">
+    <div id="dropzone">
+      <div class="dz-inner">
+        <div class="dz-icon">📷</div>
+        <p><strong>Glissez vos photos ici</strong><br>ou cliquez pour parcourir</p>
+        <p class="hint">JPEG · PNG · WebP — jusqu'à <span id="max-files">60</span> images, <span id="max-mb">25</span> Mo par image</p>
+      </div>
+    </div>
+    <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp" multiple hidden>
+    <div id="thumbs" class="thumbs"></div>
+    <div class="options">
+      <label class="opt"><input type="checkbox" id="blur-enabled" checked> Flouter les plaques d'immatriculation</label>
+      <div class="opt strength" id="strength-row">
+        <span>Intensité du flou</span>
+        <input type="range" id="blur-strength" min="1" max="5" value="3">
+        <span id="strength-val" class="val">3</span>
+      </div>
+      <label class="opt">Format
+        <select id="out-format">
+          <option value="jpeg">JPEG (léger)</option>
+          <option value="png">PNG (qualité max)</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button id="btn-process" class="btn primary" disabled>🚀 Lancer le traitement</button>
+      <button id="btn-reset" class="btn" disabled>Vider</button>
+      <button id="btn-download-all" class="btn success" disabled hidden>⬇️ Tout télécharger</button>
+      <span id="dl-hint" class="hint" hidden>Si le navigateur le demande, autorisez le « téléchargement de plusieurs fichiers » — une seule fois suffit.</span>
+    </div>
+    <div id="progress" class="progress" hidden>
+      <div class="bar"><div id="bar-fill"></div></div>
+      <span id="progress-text">0 / 0</span>
+    </div>
+    <div id="results" class="results"></div>
+  </section>
+</main>
+<footer>
+  <span>🔒 Traitement 100 % local sur ce serveur — aucune donnée n'est envoyée à des tiers.</span>
+  <a href="/api/docs" target="_blank">API</a>
+</footer>
+<script src="/app.js"></script>
+</body>
+</html>

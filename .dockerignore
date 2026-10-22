@@ -1,0 +1,10 @@
+.git
+.gitignore
+data/
+models/
+*.onnx
+__pycache__/
+*.pyc
+.venv/
+venv/
+.herenow/
