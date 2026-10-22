@@ -63,8 +63,20 @@ async def _read_limited(file: UploadFile, max_mb: int) -> bytes:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     threading.Thread(target=jobs.cleanup_loop, daemon=True, name="cleanup").start()
+    # Préchauffage : charge le modèle rembg dès le démarrage (évite ~20 s au 1er job)
+    threading.Thread(target=lambda: _warm_rembg(), daemon=True, name="warm-rembg").start()
     logger.info("Garage Image Tool v%s prêt — moteur plaques : %s", config.VERSION, detector.engine)
     yield
+
+
+def _warm_rembg() -> None:
+    try:
+        from .processing import _get_rembg_session
+
+        _get_rembg_session()
+        logger.info("Préchauffage rembg terminé")
+    except Exception:  # noqa: BLE001
+        logger.exception("Préchauffage rembg échoué (réessaie au 1er job)")
 
 
 app = FastAPI(title=config.APP_NAME, version=config.VERSION, lifespan=lifespan,
