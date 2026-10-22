@@ -20,24 +20,28 @@ from .plate_detector import PlateBox, detector
 logger = logging.getLogger(__name__)
 
 _session_lock = threading.Lock()
-_rembg_session = None
+_sessions = {}
+_birefnet_gate = threading.Semaphore(1)
+
+
+def _get_session(model):
+    """Session rembg par modèle (lazy), repli u2net."""
+    with _session_lock:
+        if model not in _sessions:
+            from rembg import new_session
+
+            try:
+                _sessions[model] = new_session(model)
+                logger.info("Session rembg %s initialisée", model)
+            except Exception:  # noqa: BLE001
+                logger.exception("Modèle %s indisponible, repli u2net", model)
+                _sessions[model] = new_session("u2net")
+    return _sessions[model]
 
 
 def _get_rembg_session():
-    """Session rembg ISNet (qualité supérieure), repli u2net, initialisée une seule fois."""
-    global _rembg_session
-    if _rembg_session is None:
-        with _session_lock:
-            if _rembg_session is None:
-                from rembg import new_session
-
-                try:
-                    _rembg_session = new_session(config.REMBG_MODEL)
-                    logger.info("Session rembg %s initialisée", config.REMBG_MODEL)
-                except Exception:  # noqa: BLE001
-                    logger.exception("Modèle %s indisponible, repli u2net", config.REMBG_MODEL)
-                    _rembg_session = new_session("u2net")
-    return _rembg_session
+    """Compatibilité préchauffage : session modèle par défaut."""
+    return _get_session(config.REMBG_MODEL)
 
 
 def _drop_small_islands(rgba: Image.Image, keep_ratio: float = 0.15) -> Image.Image:
@@ -70,6 +74,7 @@ class ProcessOptions:
     blur_strength: int = 3           # 1..5
     out_format: str = "jpeg"         # jpeg | png (forcé PNG si transparent)
     jpeg_quality: int = 92
+    rembg_model: str = "isnet-general-use"  # isnet-general-use | birefnet-general-lite
 
 
 @dataclass
@@ -93,7 +98,7 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
     alpha_arr = None
     cutout = None
     if opts.bg_mode in ("transparent", "replace"):
-        cutout = _remove_background(image)
+        cutout = _remove_background(image, opts.rembg_model)
         alpha_arr = np.asarray(cutout.getchannel("A"))
 
     if opts.bg_mode == "transparent":
@@ -132,10 +137,16 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
 
 
 # ---------------------------------------------------------------------
-def _remove_background(image: Image.Image) -> Image.Image:
+def _remove_background(image: Image.Image, model: str = None) -> Image.Image:
     from rembg import remove
 
-    return _drop_small_islands(remove(image, session=_get_rembg_session(), post_process_mask=True))
+    model = model or config.REMBG_MODEL
+    session = _get_session(model)
+    if model.startswith("birefnet"):
+        # BiRefNet est gourmand : on sérialise les découpes Max pour éviter tout OOM
+        with _birefnet_gate:
+            return _drop_small_islands(remove(image, session=session, post_process_mask=True))
+    return _drop_small_islands(remove(image, session=session, post_process_mask=True))
 
 
 def _load_background(bg_bytes: bytes, size: tuple[int, int]) -> Image.Image:

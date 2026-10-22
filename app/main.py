@@ -139,6 +139,7 @@ async def create_job(
     blur_strength: int = Form(3),
     out_format: str = Form("jpeg"),
     jpeg_quality: int = Form(92),
+    rembg_model: str = Form("isnet-general-use"),
 ):
     if not files:
         raise HTTPException(400, "Aucune image reçue")
@@ -148,6 +149,8 @@ async def create_job(
         raise HTTPException(400, "Mode de fond invalide")
     if out_format not in ("jpeg", "png"):
         raise HTTPException(400, "Format de sortie invalide")
+    if rembg_model not in (config.REMBG_MODEL, config.REMBG_MAX_MODEL):
+        raise HTTPException(400, "Modèle de détourage invalide")
 
     bg_bytes = None
     if bg_mode == "replace":
@@ -176,6 +179,7 @@ async def create_job(
             blur_strength=blur_strength,
             out_format=out_format,
             jpeg_quality=jpeg_quality,
+            rembg_model=rembg_model,
         ))
     return {"job_id": job.id, "total": job.total}
 

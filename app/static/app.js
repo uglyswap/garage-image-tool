@@ -124,6 +124,7 @@ async function process() {
   fd.append("blur_strength", $("blur-strength").value);
   fd.append("out_format", transparent ? "png" : $("out-format").value);
   fd.append("jpeg_quality", "92");
+  fd.append("rembg_model", $("rembg-model").value);
 
   $("btn-process").disabled = true;
   $("btn-download-all").hidden = true;

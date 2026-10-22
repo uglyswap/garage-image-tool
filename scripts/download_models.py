@@ -19,6 +19,7 @@ PLATE_URLS = [
     "https://huggingface.co/ml-debi/yolov8-license-plate-detection/resolve/main/best.onnx",
 ]
 U2NET_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
+BIREFNET_LITE_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx"  # qualite Max
 ISNET_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx"  # modèle principal détourage
 
 
@@ -75,6 +76,12 @@ def main() -> int:
         print("[download] isnet-general-use.onnx deja present")
     else:
         fetch(ISNET_URL, isnet, 150_000_000)
+
+    birefnet = os.path.join(MODELS_DIR, "birefnet-general-lite.onnx")
+    if os.path.isfile(birefnet) and os.path.getsize(birefnet) > 150_000_000:
+        print("[download] birefnet-general-lite.onnx deja present")
+    else:
+        fetch(BIREFNET_LITE_URL, birefnet, 150_000_000)
 
     if os.path.isfile(u2net) and os.path.getsize(u2net) > 150_000_000:
         print("[download] u2net.onnx deja present")
