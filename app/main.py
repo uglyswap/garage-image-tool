@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
@@ -232,7 +233,7 @@ def result_file(job_id: str, index: int, download: int = 0):
         name = item.out_name or "image.jpg"
         ascii_name = name.encode("ascii", "ignore").decode() or "image.jpg"
         headers["Content-Disposition"] = (
-            'attachment; filename="' + ascii_name + '"; filename*=UTF-8'' + quote(name)
+            'attachment; filename="' + ascii_name + '"; ' + "filename*=UTF-8'" + quote(name)
         )
     return FileResponse(path, media_type=media, headers=headers)
 

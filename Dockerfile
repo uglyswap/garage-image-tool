@@ -25,10 +25,10 @@ RUN pip install -r requirements.txt
 
 # Code + scripts de telechargement des modeles
 COPY scripts/ scripts/
-COPY app/ app/
-
 # Modeles embarques au build : u2net (~176 Mo) + plaques YOLOv8 ONNX (~12 Mo)
+# (avant COPY app : un changement de code ne rettelecharge pas les modeles)
 RUN python scripts/download_models.py
+COPY app/ app/
 
 # Utilisateur non-root
 RUN useradd --create-home app \
