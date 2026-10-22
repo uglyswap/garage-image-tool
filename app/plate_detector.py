@@ -76,9 +76,44 @@ class PlateDetector:
         """Détecte les plaques dans une image BGR (OpenCV)."""
         if self.engine == "yolo":
             boxes = self._detect_yolo(bgr)
+            if config.PLATE_SMALL_PASS:
+                boxes = self._merge_boxes(boxes, self._detect_small_pass(bgr))
         else:
             boxes = self._detect_haar(bgr)
         return [self._refine(bgr, b) for b in boxes]
+
+    def _detect_small_pass(self, bgr: np.ndarray) -> list[PlateBox]:
+        """2e passe : grille 2x2 de tuiles agrandies pour attraper les plaques
+        lointaines / petites (voitures de fond, photos prises de loin)."""
+        h, w = bgr.shape[:2]
+        if w < 1100 or h < 800:
+            return []
+        found: list[PlateBox] = []
+        ow, oh = w // 2, h // 2
+        qx, qy = ow // 4, oh // 4
+        for (ox, oy) in ((0, 0), (ow - qx, 0), (0, oh - qy), (ow - qx, oh - qy)):
+            tile = bgr[oy:oy + oh + qy, ox:ox + ow + qx]
+            th, tw = tile.shape[:2]
+            if tw < 400 or th < 300:
+                continue
+            scale = min(2.0, 3200.0 / tw)
+            big = cv2.resize(tile, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            for b in self._detect_yolo(big):
+                found.append(PlateBox(
+                    int(ox + b.x1 / scale), int(oy + b.y1 / scale),
+                    int(ox + b.x2 / scale), int(oy + b.y2 / scale), b.score))
+        return found
+
+    @staticmethod
+    def _merge_boxes(a: list[PlateBox], b: list[PlateBox]) -> list[PlateBox]:
+        """Fusionne les détections pleine image + tuiles (dé-dupliquées par NMS)."""
+        if not b:
+            return a
+        allb = a + b
+        xyxy = np.array([[x.x1, x.y1, x.x2, x.y2] for x in allb], dtype=np.float32)
+        scores = np.array([x.score for x in allb], dtype=np.float32)
+        keep = PlateDetector._nms(xyxy, scores, iou_thr=0.4)
+        return [allb[i] for i in keep]
 
     # ---------------------------- YOLO ONNX ----------------------------
     def _detect_yolo(self, bgr: np.ndarray) -> list[PlateBox]:
@@ -87,8 +122,9 @@ class PlateDetector:
         blob = (inp.astype(np.float32) / 255.0).transpose(2, 0, 1)[np.newaxis]
         pred = self.session.run(None, {self.input_name: blob})[0]
         pred = np.squeeze(pred, axis=0)
-        if pred.shape[0] > pred.shape[1]:
-            pred = pred.T  # -> (N, 4+nc)
+        # Layout standard YOLOv8/v11 exporté : (4+nc, N) -> on transpose en (N, 4+nc)
+        if pred.shape[0] < pred.shape[1]:
+            pred = pred.T
         num_classes = pred.shape[1] - 4
         boxes_cxcywh = pred[:, :4]
         scores = pred[:, 4:].max(axis=1) if num_classes > 1 else pred[:, 4]
