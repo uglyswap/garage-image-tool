@@ -98,7 +98,8 @@ class PlateDetector:
                 continue
             scale = min(2.0, 3200.0 / tw)
             big = cv2.resize(tile, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-            for b in self._detect_yolo(big):
+            # Seuil plus haut sur les tuiles : l'agrandissement crée des faux positifs
+            for b in self._detect_yolo(big, conf=max(0.5, self.conf)):
                 found.append(PlateBox(
                     int(ox + b.x1 / scale), int(oy + b.y1 / scale),
                     int(ox + b.x2 / scale), int(oy + b.y2 / scale), b.score))
@@ -116,8 +117,9 @@ class PlateDetector:
         return [allb[i] for i in keep]
 
     # ---------------------------- YOLO ONNX ----------------------------
-    def _detect_yolo(self, bgr: np.ndarray) -> list[PlateBox]:
+    def _detect_yolo(self, bgr: np.ndarray, conf: float | None = None) -> list[PlateBox]:
         h0, w0 = bgr.shape[:2]
+        conf_threshold = conf if conf is not None else self.conf
         scale, pad_x, pad_y, inp = self._letterbox(bgr)
         blob = (inp.astype(np.float32) / 255.0).transpose(2, 0, 1)[np.newaxis]
         pred = self.session.run(None, {self.input_name: blob})[0]
@@ -128,7 +130,7 @@ class PlateDetector:
         num_classes = pred.shape[1] - 4
         boxes_cxcywh = pred[:, :4]
         scores = pred[:, 4:].max(axis=1) if num_classes > 1 else pred[:, 4]
-        keep = scores >= self.conf
+        keep = scores >= conf_threshold
         boxes_cxcywh, scores = boxes_cxcywh[keep], scores[keep]
         if boxes_cxcywh.size == 0:
             return []

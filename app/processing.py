@@ -22,7 +22,7 @@ _session_lock = threading.Lock()
 _rembg_session = None
 
 
-def _rembg_session():
+def _get_rembg_session():
     """Session rembg U2-Net, initialisée une seule fois (lazy)."""
     global _rembg_session
     if _rembg_session is None:
@@ -100,7 +100,7 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
 def _remove_background(image: Image.Image) -> Image.Image:
     from rembg import remove
 
-    return remove(image, session=_rembg_session(), post_process_mask=True)
+    return remove(image, session=_get_rembg_session(), post_process_mask=True)
 
 
 def _load_background(bg_bytes: bytes, size: tuple[int, int]) -> Image.Image:

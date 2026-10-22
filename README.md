@@ -110,7 +110,7 @@ curl -s http://localhost:8000/api/jobs/$JOB
 | Modèle | Taille | Rôle | Source |
 |---|---|---|---|
 | `u2net.onnx` | ~176 Mo | Détourage (segmentation U²-Net) | Releases officielles [rembg](https://github.com/danielgatis/rembg) |
-| `plate_yolov8.onnx` | ~12 Mo | Détection de plaques (YOLOv8) | [ml-debi/yolov8-license-plate-detection](https://huggingface.co/ml-debi/yolov8-license-plate-detection) (Hugging Face) |
+| `plate_yolov8.onnx` | ~38 Mo | Détection de plaques (YOLO11s) | [morsetechlab/yolov11-license-plate-detection](https://huggingface.co/morsetechlab/yolov11-license-plate-detection) (Hugging Face, ~72k téléchargements) — repli auto : [ml-debi/yolov8-license-plate-detection](https://huggingface.co/ml-debi/yolov8-license-plate-detection) |
 
 Les modèles sont téléchargés au **build** (script `scripts/download_models.py`, idempotent) puis embarqués dans l'image.
 

@@ -12,7 +12,12 @@ import urllib.request
 
 MODELS_DIR = os.environ.get("MODELS_DIR", "/app/models")
 
-PLATE_URL = "https://huggingface.co/ml-debi/yolov8-license-plate-detection/resolve/main/best.onnx"
+PLATE_URLS = [
+    # Modèle principal : YOLO11s plaques (morsetechlab, ~72k téléchargements HF)
+    "https://huggingface.co/morsetechlab/yolov11-license-plate-detection/resolve/main/license-plate-finetune-v1s.onnx",
+    # Repli : YOLOv8n plaques (ml-debi)
+    "https://huggingface.co/ml-debi/yolov8-license-plate-detection/resolve/main/best.onnx",
+]
 U2NET_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
 
 
@@ -52,7 +57,17 @@ def main() -> int:
     if os.path.isfile(plate) and os.path.getsize(plate) > 3_000_000:
         print("[download] plate_yolov8.onnx deja present")
     else:
-        fetch(PLATE_URL, plate, 3_000_000)
+        last_err = None
+        for url in PLATE_URLS:
+            try:
+                fetch(url, plate, 3_000_000, attempts=2)
+                last_err = None
+                break
+            except SystemExit as exc:
+                last_err = exc
+                print("[download] source echouee, essai suivant...", file=sys.stderr, flush=True)
+        if last_err:
+            raise last_err
 
     if os.path.isfile(u2net) and os.path.getsize(u2net) > 150_000_000:
         print("[download] u2net.onnx deja present")
