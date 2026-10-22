@@ -127,7 +127,7 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
             out_img = out_img.convert("RGBA")
             out_img.putalpha(Image.fromarray(alpha_arr))
 
-    fmt = "png" if (opts.out_format == "png" or alpha_arr is not None) else "jpeg"
+    fmt = "png" if (opts.out_format == "png" or opts.bg_mode == "transparent") else "jpeg"
     buf = io.BytesIO()
     if fmt == "jpeg":
         out_img.convert("RGB").save(buf, "JPEG", quality=opts.jpeg_quality, optimize=True, progressive=True)
