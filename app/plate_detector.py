@@ -80,7 +80,50 @@ class PlateDetector:
                 boxes = self._merge_boxes(boxes, self._detect_small_pass(bgr))
         else:
             boxes = self._detect_haar(bgr)
+        if config.PLATE_CLASSIC_PASS:
+            boxes = self._merge_boxes(boxes, self._detect_classic(bgr, boxes))
         return [self._refine(bgr, b) for b in boxes]
+
+    def _detect_classic(self, bgr, existing):
+        """Passe de sauvetage classique (sans IA) : les modeles YOLO ratent
+        parfois les plaques inclinees/ombrees. Recherche de rectangles clairs,
+        au ratio de plaque, contenant du texte (fort contraste interne)."""
+        h0, w0 = bgr.shape[:2]
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        seuil = max(140.0, float(np.percentile(gray, 80)))
+        bright = ((gray > seuil) * 255).astype(np.uint8)
+        bright = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, np.ones((15, 5), np.uint8))
+        contours, _ = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cands = []
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            if w < 45 or h < 16 or w > 0.45 * w0:
+                continue
+            ratio = w / float(h)
+            if not 1.6 <= ratio <= 7.0:
+                continue
+            roi = gray[y : y + h, x : x + w]
+            if float(roi.mean()) < 135.0:
+                continue
+            cy1, cy2 = int(h * 0.2), int(h * 0.8)
+            cx1, cx2 = int(w * 0.1), int(w * 0.9)
+            inner = roi[cy1:cy2, cx1:cx2]
+            if float(inner.std()) < 42.0:
+                continue
+            box = (x, y, x + w, y + h)
+            overlap = False
+            for e in existing:
+                ix1, iy1 = max(box[0], e.x1), max(box[1], e.y1)
+                ix2, iy2 = min(box[2], e.x2), min(box[3], e.y2)
+                inter = float(max(0, ix2 - ix1) * max(0, iy2 - iy1))
+                a1 = float((box[2] - box[0]) * (box[3] - box[1]))
+                a2 = float((e.x2 - e.x1) * (e.y2 - e.y1))
+                if a1 + a2 - inter > 0 and inter / (a1 + a2 - inter) > 0.25:
+                    overlap = True
+                    break
+            if not overlap:
+                cands.append(PlateBox(x, y, x + w, y + h, 0.55))
+        return cands
 
     def _detect_small_pass(self, bgr: np.ndarray) -> list[PlateBox]:
         """2e passe : grille 2x2 de tuiles agrandies pour attraper les plaques

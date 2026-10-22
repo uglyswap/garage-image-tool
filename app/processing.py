@@ -107,8 +107,16 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
     if plates:
         rgb = np.asarray(out_img.convert("RGB"))
         bgr2 = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        blurred = 0
         for box in plates:
+            # Si l objet porteur de la plaque a ete retire du cutout
+            # (nettoyage ilots), inutile de flouter : tache flottante.
+            if alpha_arr is not None:
+                roi_alpha = alpha_arr[box.y1 : box.y2, box.x1 : box.x2]
+                if roi_alpha.size and float(roi_alpha.mean()) < 30:
+                    continue
             _blur_plate(bgr2, box, opts.blur_strength)
+            blurred += 1
         out_img = Image.fromarray(cv2.cvtColor(bgr2, cv2.COLOR_BGR2RGB))
         if alpha_arr is not None:
             out_img = out_img.convert("RGBA")
@@ -120,7 +128,7 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
         out_img.convert("RGB").save(buf, "JPEG", quality=opts.jpeg_quality, optimize=True, progressive=True)
     else:
         out_img.save(buf, "PNG", optimize=True)
-    return ProcessResult(buf.getvalue(), fmt, len(plates), image.width, image.height)
+    return ProcessResult(buf.getvalue(), fmt, blurred if plates else 0, image.width, image.height)
 
 
 # ---------------------------------------------------------------------
