@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "Garage Image Tool"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "app", "static")
@@ -19,7 +19,7 @@ MAX_FILES = int(os.environ.get("MAX_FILES", "60"))
 MAX_TOTAL_MB = int(os.environ.get("MAX_TOTAL_MB", "400"))  # plafond cumule par lot
 MAX_PIXELS = int(os.environ.get("MAX_PIXELS", "120000000"))  # anti decompression-bomb
 JOB_TTL_MINUTES = int(os.environ.get("JOB_TTL_MINUTES", "1440"))  # resultats conserves 24h
-PLATE_CONF_THRESHOLD = float(os.environ.get("PLATE_CONF_THRESHOLD", "0.35"))
+PLATE_CONF_THRESHOLD = float(os.environ.get("PLATE_CONF_THRESHOLD", "0.30"))
 REMBG_MODEL = os.environ.get("REMBG_MODEL", "birefnet-general-lite")  # isnet = option rapide
 REMBG_MAX_MODEL = os.environ.get("REMBG_MAX_MODEL", "birefnet-general-lite")  # qualite Max (≈ remove.bg)
 REMBG_FAST_MODEL = os.environ.get("REMBG_FAST_MODEL", "isnet-general-use")  # option "Rapide" de l'UI
@@ -29,6 +29,7 @@ REMBG_ALLOWED_MODELS = {REMBG_MODEL, REMBG_MAX_MODEL, REMBG_FAST_MODEL}
 ORT_DISABLE_ARENA = os.environ.get("ORT_DISABLE_ARENA", "1") == "1"
 ORT_THREADS = int(os.environ.get("ORT_THREADS", "0"))
 MAX_RESUMES = int(os.environ.get("MAX_RESUMES", "2"))  # reprises auto max d'un meme traitement interrompu
+PLATE_WEAK_THRESHOLD = float(os.environ.get("PLATE_WEAK_THRESHOLD", "0.2"))  # detections faibles, retenues si contour de plaque net (0 = off)
 PLATE_SMALL_PASS = os.environ.get("PLATE_SMALL_PASS", "1") == "1"  # 2e passe tuiles x2 (petites plaques)
 PLATE_CLASSIC_PASS = os.environ.get("PLATE_CLASSIC_PASS", "0") == "1"  # expérimental: sauvetage classique (FP sur carrosserie, désactivé par défaut)
 

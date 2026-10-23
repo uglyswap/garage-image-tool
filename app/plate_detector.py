@@ -1,11 +1,11 @@
 """Détection des plaques d'immatriculation.
 
 Deux moteurs, par ordre de priorité :
-1. YOLOv8 exporté en ONNX (multi-pays) — inférence onnxruntime, 100% CPU.
+1. YOLOv8 exporté en ONNX (multi-pays) : inférence onnxruntime, 100% CPU.
 2. Cascade de Haar OpenCV (repli automatique si le modèle ONNX est absent).
 
 Après détection, un affinage par contours resserre la boîte sur la plaque
-réelle, pour ne flouter que la plaque — jamais la moitié de la voiture.
+réelle, pour ne flouter que la plaque, jamais la moitié de la voiture.
 
 Le détecteur est pays-agnostique : il détecte la *géométrie* du rectangle
 de plaque, pas son texte (fonctionne UE, US, Asie, motos, remorques...).
@@ -24,6 +24,9 @@ from . import config
 logger = logging.getLogger(__name__)
 
 INPUT_SIZE = 640
+QUAD_MARGIN = 0.03        # marge de recherche du contour autour de la boîte YOLO
+QUAD_MIN_AREA = 0.30      # aire mini du contour, en part de la boîte YOLO (écarte emblèmes et caractères)
+SHRINK_FALLBACK = 0.03    # réduction de la boîte YOLO quand aucun contour de plaque n'est trouvé
 
 
 @dataclass
@@ -33,7 +36,7 @@ class PlateBox:
     x2: int
     y2: int
     score: float
-    pts: list = None  # 4 coins [x,y] si plaque inclinée (minAreaRect)
+    pts: list = None  # 4 coins [x,y] du quadrilatère de la plaque (incliné ou en perspective)
 
     @property
     def w(self) -> int:
@@ -75,8 +78,13 @@ class PlateDetector:
     # ------------------------------------------------------------------
     def detect(self, bgr: np.ndarray) -> list[PlateBox]:
         """Détecte les plaques dans une image BGR (OpenCV)."""
+        weak: list[PlateBox] = []
         if self.engine == "yolo":
-            boxes = self._detect_yolo(bgr)
+            weak_thr = config.PLATE_WEAK_THRESHOLD
+            low = min(self.conf, weak_thr) if weak_thr > 0 else self.conf
+            found = self._detect_yolo(bgr, conf=low)
+            boxes = [b for b in found if b.score >= self.conf]
+            weak = [b for b in found if b.score < self.conf]
             if config.PLATE_SMALL_PASS:
                 boxes = self._merge_boxes(boxes, self._detect_small_pass(bgr))
         else:
@@ -84,7 +92,18 @@ class PlateDetector:
         if config.PLATE_CLASSIC_PASS:
             boxes = self._merge_boxes(boxes, self._detect_classic(bgr, boxes))
         refined = [self._refine(bgr, b) for b in boxes]
+        # Détections faibles (plaque petite ou floue) : retenues seulement si un contour de plaque net est trouvé
+        for b in weak:
+            quad = self._fit_quad(bgr, b)
+            if quad is not None and not any(self._overlaps(quad, r) for r in refined):
+                refined.append(quad)
         return refined
+
+    @staticmethod
+    def _overlaps(a: PlateBox, b: PlateBox) -> bool:
+        ix = max(0, min(a.x2, b.x2) - max(a.x1, b.x1))
+        iy = max(0, min(a.y2, b.y2) - max(a.y1, b.y1))
+        return ix * iy > 0.3 * min(a.w * a.h, b.w * b.h)
 
     def _detect_classic(self, bgr, existing):
         """Passe de sauvetage classique (sans IA) : les modeles YOLO ratent
@@ -251,94 +270,93 @@ class PlateDetector:
         box.x1, box.y1, box.x2, box.y2 = x1, y1, x2, y2
         return box
 
-    # ----------------------- affinage par contours ----------------------
+    # ------------------- ajustement sur le contour réel -------------------
     def _refine(self, bgr: np.ndarray, box: PlateBox) -> PlateBox:
-        """Resserre la boîte sur les contours réels de la plaque.
+        """Resserre la boîte YOLO sur la plaque.
 
-        Dans la boîte détectée (avec une petite marge), on cherche le plus
-        grand rectangle de ratio plausible (une plaque). S'il existe ET qu'il
-        reste très proche de la détection initiale, on l'utilise ; sinon on
-        garde la boîte du détecteur, déjà précise.
-        """
+        Quadrilatère exact (incliné, éventuellement en perspective) si un contour
+        fermé de plaque est trouvé ; sinon la boîte du détecteur légèrement réduite
+        (elle déborde toujours un peu de la plaque)."""
+        quad = self._fit_quad(bgr, box)
+        return quad if quad is not None else self._shrink(box, SHRINK_FALLBACK)
+
+    @staticmethod
+    def _shrink(box: PlateBox, ratio: float) -> PlateBox:
+        dx, dy = int(box.w * ratio), int(box.h * ratio)
+        return PlateBox(box.x1 + dx, box.y1 + dy, box.x2 - dx, box.y2 - dy, box.score)
+
+    @staticmethod
+    def _order_corners(pts: np.ndarray) -> np.ndarray:
+        """Ordonne 4 points : haut-gauche, haut-droite, bas-droite, bas-gauche."""
+        s, d = pts.sum(axis=1), np.diff(pts, axis=1).ravel()
+        return np.array([pts[s.argmin()], pts[d.argmin()], pts[s.argmax()], pts[d.argmax()]], dtype=np.float32)
+
+    def _as_quad(self, cnt: np.ndarray) -> np.ndarray | None:
+        """Quadrilatère convexe d'un contour : 4 sommets de l'enveloppe, sinon rectangle orienté très rempli."""
+        hull = cv2.convexHull(cnt)
+        hull_area = cv2.contourArea(hull)
+        if hull_area <= 0:
+            return None
+        peri = cv2.arcLength(hull, True)
+        for eps in (0.02, 0.03, 0.04, 0.06):
+            approx = cv2.approxPolyDP(hull, eps * peri, True)
+            if len(approx) == 4:
+                return self._order_corners(approx.reshape(4, 2).astype(np.float32))
+        rect = cv2.minAreaRect(hull)
+        rect_area = rect[1][0] * rect[1][1]
+        if rect_area > 0 and hull_area / rect_area >= 0.9:
+            return self._order_corners(cv2.boxPoints(rect))
+        return None
+
+    @staticmethod
+    def _quad_is_plate(quad: np.ndarray) -> bool:
+        """Proportions de plaque, côtés opposés comparables (perspective modérée)."""
+        tl, tr, br, bl = quad
+        top, bot = float(np.linalg.norm(tr - tl)), float(np.linalg.norm(br - bl))
+        lef, rig = float(np.linalg.norm(bl - tl)), float(np.linalg.norm(br - tr))
+        if min(top, bot, lef, rig) < 4:
+            return False
+        if max(top, bot) / min(top, bot) > 1.5 or max(lef, rig) / min(lef, rig) > 1.5:
+            return False
+        return 1.6 <= (top + bot) / (lef + rig) <= 9.0
+
+    def _fit_quad(self, bgr: np.ndarray, box: PlateBox) -> PlateBox | None:
+        """Cherche, dans la boîte YOLO, le plus grand contour fermé à 4 coins ayant des proportions de plaque."""
         h0, w0 = bgr.shape[:2]
-        margin_x, margin_y = int(box.w * 0.12), int(box.h * 0.25)
-        rx1, ry1 = max(0, box.x1 - margin_x), max(0, box.y1 - margin_y)
-        rx2, ry2 = min(w0, box.x2 + margin_x), min(h0, box.y2 + margin_y)
+        mx, my = max(2, int(box.w * QUAD_MARGIN)), max(2, int(box.h * QUAD_MARGIN))
+        rx1, ry1 = max(0, box.x1 - mx), max(0, box.y1 - my)
+        rx2, ry2 = min(w0, box.x2 + mx), min(h0, box.y2 + my)
         roi = bgr[ry1:ry2, rx1:rx2]
-        if roi.size == 0:
-            return box
-        gray = cv2.GaussianBlur(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY), (3, 3), 0)
-        edges = cv2.dilate(cv2.Canny(gray, 60, 160), np.ones((3, 3), np.uint8), iterations=1)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        roi_area = float(roi.shape[0] * roi.shape[1])
-        best = None
-        best_cnt = None
-        best_area = 0.0
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            if w < 8 or h < 6:
-                continue
-            ratio = w / float(h)
-            if not 1.4 <= ratio <= 7.5:
-                continue
-            area = float(w * h)
-            if area <= best_area or area < 0.20 * roi_area:
-                continue
-            best, best_cnt, best_area = (x, y, w, h), cnt, area
-        if best is None or best_cnt is None:
-            return self._rotated_refine(roi, rx1, ry1, box)
-        x, y, w, h = best
-        nx1, ny1, nx2, ny2 = rx1 + x, ry1 + y, rx1 + x + w, ry1 + y + h
-        ix1, iy1 = max(nx1, box.x1), max(ny1, box.y1)
-        ix2, iy2 = min(nx2, box.x2), min(ny2, box.y2)
-        inter = float(max(0, ix2 - ix1) * max(0, iy2 - iy1))
-        union = float(box.w * box.h + w * h - inter)
-        if union <= 0 or inter / union < 0.5 or (w * h) > 1.6 * float(box.w * box.h):
-            return box
-        tilted = self._rotated_refine(roi, rx1, ry1, PlateBox(nx1, ny1, nx2, ny2, box.score))
-        return tilted if tilted is not None else PlateBox(nx1, ny1, nx2, ny2, box.score)
-
-    def _rotated_refine(self, roi, rx1, ry1, box):
-        """Détecte l angle réel de la plaque dans la ROI (minAreaRect).
-
-        Si un quadrilatère incliné plausible est trouvé (aire plausible,
-        ratio de plaque, angle hors axe), renvoie une PlateBox avec les
-        4 coins exacts — sinon None (la boîte axis-aligned est conservée)."""
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, np.ones((5, 3), np.uint8))
-        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
+        rh, rw = roi.shape[:2]
+        if rh < 8 or rw < 12:
             return None
-        roi_area = float(roi.shape[0] * roi.shape[1])
-        best_cnt, best_area = None, 0.0
-        for cnt in contours:
-            a = cv2.contourArea(cnt)
-            if a > best_area:
-                best_cnt, best_area = cnt, a
-        if best_cnt is None or best_area < 0.15 * roi_area:
-            return None
-        (cx, cy), (rw, rh), angle = cv2.minAreaRect(best_cnt)
-        if rw < 25 or rh < 8:
-            return None
-        lo, hi = min(rw, rh), max(rw, rh)
-        ratio = hi / max(1.0, lo)
-        if not 1.4 <= ratio <= 8.5:
-            return None
+        k = max(3, (box.h // 50) | 1)
+        gray = cv2.GaussianBlur(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY), (k, k), 0)
+        med = float(np.median(gray))
+        edges = cv2.Canny(gray, int(max(10, 0.5 * med)), int(max(40, 1.2 * med)))
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
         box_area = float(box.w * box.h)
-        if best_area < 0.25 * box_area or best_area > 1.1 * box_area:
+        cx1, cy1, cx2, cy2 = box.x1 - rx1, box.y1 - ry1, box.x2 - rx1, box.y2 - ry1
+        best, best_area = None, 0.0
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area <= best_area or area < QUAD_MIN_AREA * box_area or area > 1.05 * box_area:
+                continue
+            quad = self._as_quad(cnt)
+            if quad is None or not self._quad_is_plate(quad):
+                continue
+            if quad.min() < 1 or quad[:, 0].max() > rw - 2 or quad[:, 1].max() > rh - 2:
+                continue  # contour coupé par le bord de la zone de recherche
+            cx, cy = float(quad[:, 0].mean()), float(quad[:, 1].mean())
+            if not (cx1 + 0.2 * box.w <= cx <= cx2 - 0.2 * box.w and cy1 + 0.2 * box.h <= cy <= cy2 - 0.2 * box.h):
+                continue
+            best, best_area = quad, area
+        if best is None:
             return None
-        pts = cv2.boxPoints(((cx, cy), (rw, rh), angle)).tolist()
-        nx1 = int(min(p[0] for p in pts)) + rx1
-        ny1 = int(min(p[1] for p in pts)) + ry1
-        nx2 = int(max(p[0] for p in pts)) + rx1
-        ny2 = int(max(p[1] for p in pts)) + ry1
-        nx1, ny1 = max(0, nx1), max(0, ny1)
-        clipped = PlateBox(nx1, ny1, nx2, ny2, box.score)
-        if clipped.w < 12 or clipped.h < 8:
-            return None
-        clipped.pts = [[p[0] + rx1, p[1] + ry1] for p in pts]
-        return clipped
+        pts = [[float(x) + rx1, float(y) + ry1] for x, y in best]
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        return PlateBox(int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)), box.score, pts)
 
 
 # Singleton partagé (chargé au démarrage de l'app)
