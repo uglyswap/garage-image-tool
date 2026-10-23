@@ -63,3 +63,15 @@ def test_process_transparent_counts_plate_with_shift(monkeypatch):
     result = processing.process_image(jpeg_bytes(200, 150), processing.ProcessOptions(bg_mode="transparent"))
     assert result.fmt == "png"
     assert result.plates_blurred == 1
+
+
+def test_ort_session_options_disable_arena_by_default(monkeypatch):
+    opts = processing._session_options()
+    assert opts.enable_cpu_mem_arena is False  # la RAM est rendue apres chaque image
+    assert opts.enable_mem_pattern is False
+
+    monkeypatch.setattr(processing.config, "ORT_DISABLE_ARENA", False)
+    monkeypatch.setattr(processing.config, "ORT_THREADS", 3)
+    opts = processing._session_options()
+    assert opts.enable_cpu_mem_arena is True
+    assert opts.intra_op_num_threads == 3 and opts.inter_op_num_threads == 1

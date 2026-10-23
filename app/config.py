@@ -24,6 +24,11 @@ REMBG_MODEL = os.environ.get("REMBG_MODEL", "birefnet-general-lite")  # isnet = 
 REMBG_MAX_MODEL = os.environ.get("REMBG_MAX_MODEL", "birefnet-general-lite")  # qualite Max (≈ remove.bg)
 REMBG_FAST_MODEL = os.environ.get("REMBG_FAST_MODEL", "isnet-general-use")  # option "Rapide" de l'UI
 REMBG_ALLOWED_MODELS = {REMBG_MODEL, REMBG_MAX_MODEL, REMBG_FAST_MODEL}
+# ONNX Runtime : l'arene memoire garde ~7 Go occupes apres un detourage BiRefNet (mesure) ; desactivee,
+# la memoire est rendue apres chaque image (pic inchange ~6 Go). ORT_THREADS=0 : valeur par defaut d'ORT.
+ORT_DISABLE_ARENA = os.environ.get("ORT_DISABLE_ARENA", "1") == "1"
+ORT_THREADS = int(os.environ.get("ORT_THREADS", "0"))
+MAX_RESUMES = int(os.environ.get("MAX_RESUMES", "2"))  # reprises auto max d'un meme traitement interrompu
 PLATE_SMALL_PASS = os.environ.get("PLATE_SMALL_PASS", "1") == "1"  # 2e passe tuiles x2 (petites plaques)
 PLATE_CLASSIC_PASS = os.environ.get("PLATE_CLASSIC_PASS", "0") == "1"  # expérimental: sauvetage classique (FP sur carrosserie, désactivé par défaut)
 

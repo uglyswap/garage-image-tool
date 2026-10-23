@@ -24,6 +24,21 @@ _sessions = {}
 _birefnet_gate = threading.Semaphore(1)
 
 
+def _session_options():
+    """Options ONNX Runtime : arène mémoire désactivée (la RAM est rendue après chaque image)
+    et nombre de threads configurable (ORT_THREADS)."""
+    import onnxruntime as ort
+
+    so = ort.SessionOptions()
+    if config.ORT_DISABLE_ARENA:
+        so.enable_cpu_mem_arena = False
+        so.enable_mem_pattern = False
+    if config.ORT_THREADS > 0:
+        so.intra_op_num_threads = config.ORT_THREADS
+        so.inter_op_num_threads = 1
+    return so
+
+
 def _get_session(model):
     """Session rembg par modèle (lazy), repli u2net."""
     with _session_lock:
@@ -31,11 +46,11 @@ def _get_session(model):
             from rembg import new_session
 
             try:
-                _sessions[model] = new_session(model)
+                _sessions[model] = new_session(model, sess_opts=_session_options())
                 logger.info("Session rembg %s initialisée", model)
             except Exception:  # noqa: BLE001
                 logger.exception("Modèle %s indisponible, repli u2net", model)
-                _sessions[model] = new_session("u2net")
+                _sessions[model] = new_session("u2net", sess_opts=_session_options())
     return _sessions[model]
 
 

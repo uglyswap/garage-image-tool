@@ -107,6 +107,7 @@ class ResultItem:
     plates: int = 0
     out_file: str | None = None
     out_name: str | None = None
+    resumes: int = 0             # reprises automatiques apres interruption (plafonnees par MAX_RESUMES)
 
 
 @dataclass
@@ -160,7 +161,8 @@ class JobStore:
                 "done": job.done, "status": job.status, "opts": job.opts,
                 "results": [{"index": r.index, "name": r.name, "status": r.status,
                              "error": r.error, "plates": r.plates,
-                             "out_file": r.out_file, "out_name": r.out_name}
+                             "out_file": r.out_file, "out_name": r.out_name,
+                             "resumes": r.resumes}
                             for r in job.results],
             }
         path = os.path.join(self.job_dir(job.id), "status.json")
@@ -196,8 +198,17 @@ class JobStore:
                                 pass
                             continue
                         in_path = os.path.join(jd, "in_" + str(r.index))
-                        if os.path.isfile(in_path):
+                        if os.path.isfile(in_path) and r.resumes >= config.MAX_RESUMES:
+                            # Plante a chaque reprise (ex. memoire insuffisante) : on arrete la boucle
+                            r.status = "error"
+                            r.error = "Traitement interrompu à répétition (mémoire insuffisante ?)"
+                            try:
+                                os.remove(in_path)
+                            except OSError:
+                                pass
+                        elif os.path.isfile(in_path):
                             r.status = "pending"
+                            r.resumes += 1
                             self._resume.append((None, r.index, in_path, dict(opts), job_id))
                             resumed = True
                         else:
@@ -214,6 +225,8 @@ class JobStore:
                               results=results, opts=opts)
                     with self._lock:
                         self._jobs[job.id] = job
+                    # Compteur de reprises persiste AVANT le traitement : survit a un crash (OOM)
+                    self.save_status(job)
                     count += 1
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Rechargement job %s impossible : %s", job_id, exc)
@@ -222,6 +235,11 @@ class JobStore:
             outs = sorted(glob.glob(os.path.join(jd, "out_*")))
             if not outs:
                 continue
+            for leftover in glob.glob(os.path.join(jd, "in_*")):  # RGPD : originaux d'anciens jobs
+                try:
+                    os.remove(leftover)
+                except OSError:
+                    pass
             results = []
             for op in outs:
                 b = os.path.basename(op)
