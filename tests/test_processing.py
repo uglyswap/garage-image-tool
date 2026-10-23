@@ -75,3 +75,34 @@ def test_ort_session_options_disable_arena_by_default(monkeypatch):
     opts = processing._session_options()
     assert opts.enable_cpu_mem_arena is True
     assert opts.intra_op_num_threads == 3 and opts.inter_op_num_threads == 1
+
+
+def test_rembg_session_built_from_session_class_with_our_options(monkeypatch):
+    """La session est creee via la classe (signature stable entre versions de rembg), pas via new_session."""
+    import sys
+    import types
+
+    captured = {}
+
+    class FakeSession:
+        @staticmethod
+        def name():
+            return "fake-model"
+
+        def __init__(self, model_name, sess_opts, *args, **kwargs):
+            captured.update(model=model_name, opts=sess_opts, args=args, kwargs=kwargs)
+
+    fake = types.ModuleType("rembg.sessions")
+    fake.sessions_class = [FakeSession]
+    monkeypatch.setitem(sys.modules, "rembg", types.ModuleType("rembg"))
+    monkeypatch.setitem(sys.modules, "rembg.sessions", fake)
+
+    session = processing._new_rembg_session("fake-model")
+    assert isinstance(session, FakeSession)
+    assert captured["model"] == "fake-model"
+    assert captured["opts"].enable_cpu_mem_arena is False
+    assert captured["kwargs"] == {}  # pas de sess_opts en double
+    import pytest
+
+    with pytest.raises(ValueError):
+        processing._new_rembg_session("inconnu")

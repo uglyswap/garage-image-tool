@@ -39,18 +39,30 @@ def _session_options():
     return so
 
 
+def _new_rembg_session(model: str):
+    """Crée la session rembg avec nos SessionOptions.
+
+    Instancie directement la classe de session : la signature de rembg.new_session varie selon
+    les versions (sess_opts en mot-clé en 2.0.86, absent en 2.0.69 où il est construit en interne)
+    alors que BaseSession(model_name, sess_opts, ...) est stable."""
+    from rembg.sessions import sessions_class
+
+    for session_class in sessions_class:
+        if session_class.name() == model:
+            return session_class(model, _session_options())
+    raise ValueError("Modèle rembg inconnu : " + model)
+
+
 def _get_session(model):
     """Session rembg par modèle (lazy), repli u2net."""
     with _session_lock:
         if model not in _sessions:
-            from rembg import new_session
-
             try:
-                _sessions[model] = new_session(model, sess_opts=_session_options())
+                _sessions[model] = _new_rembg_session(model)
                 logger.info("Session rembg %s initialisée", model)
             except Exception:  # noqa: BLE001
                 logger.exception("Modèle %s indisponible, repli u2net", model)
-                _sessions[model] = new_session("u2net", sess_opts=_session_options())
+                _sessions[model] = _new_rembg_session("u2net")
     return _sessions[model]
 
 
