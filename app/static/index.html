@@ -49,21 +49,12 @@
           <option value="isnet-general-use">Rapide — ISNet</option>
         </select>
       </label>
-    </div>
-    <div class="options">
-      <div class="opt resize-group">
-        <span>Redimensionner</span>
-        <input type="number" id="resize-w" placeholder="Largeur" min="0" style="width:80px">
-        <span class="resize-link" id="resize-link" title="Proportions verrouillées">🔗</span>
-        <input type="number" id="resize-h" placeholder="Hauteur" min="0" style="width:80px">
-        <span class="hint">px — laissez vide pour garder l'original</span>
-      </div>
-    </div>
-    <div class="options">
-      <div class="opt crop-group">
-        <span>Recadrer (px : haut,bas,gauche,droite)</span>
-        <input type="text" id="crop-values" placeholder="0,0,0,0" style="width:140px">
-      </div>
+      <label class="opt">Format
+        <select id="out-format">
+          <option value="jpeg">JPEG (léger)</option>
+          <option value="png">PNG (qualité max)</option>
+        </select>
+      </label>
     </div>
     <div class="options">
       <label class="opt">Format
