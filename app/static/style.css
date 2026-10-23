@@ -29,6 +29,10 @@ header {
 .brand { font-size: 18px; display: flex; align-items: center; gap: 8px; }
 .brand .logo { font-size: 22px; }
 .tag { color: var(--muted); font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }
+.badge {
+  color: var(--muted); font-size: 13px; border: 1px solid var(--border);
+  background: var(--panel); border-radius: 999px; padding: 6px 12px;
+}
 main { display: grid; grid-template-columns: 280px 1fr; gap: 20px; padding: 22px; flex: 1; align-items: start; }
 @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
 .panel, .workspace {

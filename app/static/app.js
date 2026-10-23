@@ -1,4 +1,4 @@
-/* Garage Image Tool · frontend (vanilla JS, aucune dépendance) */
+/* Garage Image Tool — frontend (vanilla JS, aucune dépendance) */
 "use strict";
 
 var PSEUDO = [
@@ -21,10 +21,8 @@ async function init() {
     var h = await fetch("/api/health").then(function (r) { return r.json(); });
     state.health = h;
     $("version").textContent = "v" + h.version;
-    var _badge = $("engine-badge");
-    if (h.plate_engine === "yolo") { _badge.style.display = "none"; } else { _badge.style.display = ""; }
-    _badge.textContent = h.plate_engine === "yolo"
-      ? ""
+    $("engine-badge").textContent = h.plate_engine === "yolo"
+      ? "🧠 Plaques : YOLOv8 · IA locale"
       : "⚠️ Plaques : cascade Haar (repli)";
     $("max-files").textContent = h.max_files;
     $("max-mb").textContent = h.max_file_mb;
@@ -128,9 +126,6 @@ async function process() {
   fd.append("jpeg_quality", "92");
   fd.append("rembg_model", $("rembg-model").value);
   fd.append("plate_style", $("plate-style").value);
-  fd.append("resize_width", $("resize-w").value || "");
-  fd.append("resize_height", $("resize-h").value || "");
-  fd.append("crop", $("crop-values").value || "");
 
   $("btn-process").disabled = true;
   $("btn-download-all").hidden = true;
@@ -216,13 +211,10 @@ function renderResults(j) {
         ? '<img class="r-thumb" src="' + r.url + '" alt="">'
         : '<div class="r-ph">' + ph + "</div>") +
       '<div class="r-info"><div class="r-name">' + esc(r.name) + '</div><div class="r-meta">' + meta + "</div></div>" +
-      (r.status === "done" ? '<button class="r-dl">⬇️</button><button class="r-eye" title="Voir">👁️</button><button class="r-rt" title="Retouche manuelle">✏️</button>' : "");
+      (r.status === "done" ? '<button class="r-dl">⬇️</button><button class="r-rt" title="Retouche manuelle">✏️</button>' : "");
     if (r.status === "done") {
       el.querySelector(".r-dl").addEventListener("click", function () {
         downloadOne(r);
-      });
-      el.querySelector(".r-eye").addEventListener("click", function () {
-        window.open(r.url, "_blank");
       });
       el.querySelector(".r-rt").addEventListener("click", function () {
         openRetouch(state.jobId, r);
@@ -311,15 +303,14 @@ function openRetouch(jobId, r) {
   var ov = document.createElement("div");
   ov.id = "rt-overlay";
   ov.innerHTML = '<div class="rt-box">' +
-    '<div class="rt-head">✏️ Retouche · cliquez les points autour de la plaque (octogone), puis Appliquer' +
+    '<div class="rt-head">✏️ Retouche — cliquez les points autour de la plaque (octogone), puis Appliquer' +
     '<button id="rt-close" title="Fermer">✕</button></div>' +
     '<div id="rt-stage"></div>' +
     '<div class="rt-actions"><button id="rt-apply" class="btn primary">Appliquer le flou</button>' +
     '<button id="rt-reset" class="btn">Effacer les points</button>' +
     '<select id="rt-style" class="rt-select"><option value="blur">Flou</option><option value="white">Rectangle blanc</option></select>' +
-    '<label class="rt-strength">Intensité <input type="range" id="rt-strength" min="1" max="5" value="3"></label>' +
     '<span class="hint" id="rt-n">0 point</span>' +
-    '<span class="hint">3 à 8 points · 4 points suffisent pour un rectangle incliné.</span></div>' +
+    '<span class="hint">3 à 8 points — 4 points suffisent pour un rectangle incliné.</span></div>' +
     '</div>';
   document.body.appendChild(ov);
   var im = document.createElement("img");
@@ -377,7 +368,7 @@ async function applyRetouch() {
     var res = await fetch("/api/retouch/" + rt.jobId + "/" + rt.index, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ polygon: rt.pts, strength: parseInt(($("rt-strength") || $("blur-strength")).value, 10) || 3, style: $("rt-style").value })
+      body: JSON.stringify({ polygon: rt.pts, strength: parseInt($("blur-strength").value, 10) || 3, style: $("rt-style").value })
     });
     if (!res.ok) {
       var err = await res.json().catch(function () { return {}; });
