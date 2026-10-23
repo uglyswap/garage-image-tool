@@ -25,15 +25,17 @@ RUN pip install -r requirements.txt
 
 # Code + scripts de telechargement des modeles
 COPY scripts/ scripts/
-# Modeles embarques au build : u2net (~176 Mo) + plaques YOLOv8 ONNX (~12 Mo)
+# Modeles embarques au build (verifies par SHA-256) : BiRefNet (~224 Mo), ISNet (~178 Mo),
+# u2net (~176 Mo, repli) + plaques YOLO ONNX (~38 Mo). rembg les retrouve via U2NET_HOME.
 # (avant COPY app : un changement de code ne rettelecharge pas les modeles)
 RUN python scripts/download_models.py
-COPY app/ app/
 
-# Utilisateur non-root
+# Utilisateur non-root. chown NON recursif : un chown -R /app recopierait dans une
+# nouvelle couche les ~700 Mo de modeles (lisibles par "app" sans changer de proprietaire).
 RUN useradd --create-home app \
  && mkdir -p /data \
- && chown -R app:app /app /data
+ && chown app:app /app /app/models /data
+COPY --chown=app:app app/ app/
 USER app
 
 EXPOSE 8000

@@ -74,10 +74,12 @@ class BackgroundStore:
         return item
 
     def list(self) -> list[Background]:
-        return sorted(self._items.values(), key=lambda i: i.created)
+        with self._lock:
+            return sorted(self._items.values(), key=lambda i: i.created)
 
     def get(self, bg_id: str) -> Background | None:
-        return self._items.get(bg_id)
+        with self._lock:
+            return self._items.get(bg_id)
 
     def path(self, item: Background) -> str:
         return os.path.join(self.dir, item.file)
@@ -117,6 +119,7 @@ class Job:
     results: list[ResultItem] = field(default_factory=list)
     opts: dict = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    file_lock: threading.Lock = field(default_factory=threading.Lock)  # retouche : lecture/ecriture d un resultat
 
 
 class JobStore:
@@ -140,6 +143,12 @@ class JobStore:
 
     def job_dir(self, job_id: str) -> str:
         return os.path.join(self.dir, job_id)
+
+    def discard(self, job_id: str) -> None:
+        """Oublie un job et supprime ses fichiers (lot refusé avant traitement)."""
+        with self._lock:
+            self._jobs.pop(job_id, None)
+        shutil.rmtree(self.job_dir(job_id), ignore_errors=True)
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
@@ -180,6 +189,11 @@ class JobStore:
                     for r in results:
                         if r.status == "done":
                             done += 1
+                            # RGPD : purge des originaux laisses par une version anterieure
+                            try:
+                                os.remove(os.path.join(jd, "in_" + str(r.index)))
+                            except OSError:
+                                pass
                             continue
                         in_path = os.path.join(jd, "in_" + str(r.index))
                         if os.path.isfile(in_path):
@@ -189,12 +203,15 @@ class JobStore:
                         else:
                             r.status = "error"
                             r.error = "Interrompu par un redémarrage"
-                    status = "processing" if resumed else d.get("status", "done")
+                    if resumed:
+                        status = "processing"
+                    else:
+                        # Aucun item repris : les non termines sont deja en erreur, le job est clos
+                        status = "done"
+                        done = len(results)
                     job = Job(d["id"], d["created"], d["total"],
                               done=done, status=status,
                               results=results, opts=opts)
-                    if resumed:
-                        job.done = done
                     with self._lock:
                         self._jobs[job.id] = job
                     count += 1
@@ -243,11 +260,14 @@ class JobStore:
         """Supprime les jobs (et leurs fichiers) après expiration du TTL."""
         while True:
             time.sleep(900)
-            with self._lock:
-                now = time.time()
-                expired = [j.id for j in self._jobs.values() if now - j.created > self.ttl]
-                for job_id in expired:
-                    self._jobs.pop(job_id, None)
-                    shutil.rmtree(self.job_dir(job_id), ignore_errors=True)
-                if expired:
-                    logger.info("Nettoyage : %d job(s) expiré(s)", len(expired))
+            try:
+                with self._lock:
+                    now = time.time()
+                    expired = [j.id for j in self._jobs.values() if now - j.created > self.ttl]
+                    for job_id in expired:
+                        self._jobs.pop(job_id, None)
+                        shutil.rmtree(self.job_dir(job_id), ignore_errors=True)
+                    if expired:
+                        logger.info("Nettoyage : %d job(s) expiré(s)", len(expired))
+            except Exception:  # noqa: BLE001
+                logger.exception("Nettoyage des jobs en echec (nouvel essai au prochain cycle)")

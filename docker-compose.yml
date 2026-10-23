@@ -9,6 +9,7 @@ services:
       MAX_WORKERS: "1"          # workers CPU paralleles (rembg/onnxruntime)
       DATA_DIR: /data
       MODELS_DIR: /app/models
+      APP_PASSWORD: ${APP_PASSWORD:-}   # vide = acces ouvert (deconseille) ; definissez-le dans .env
     volumes:
       - garage-data:/data       # fonds enregistres + resultats temporaires
     restart: unless-stopped

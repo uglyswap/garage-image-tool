@@ -7,3 +7,5 @@ data/
 *.onnx
 .herenow/
 .DS_Store
+.secret
+.env
