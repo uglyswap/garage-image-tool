@@ -22,7 +22,7 @@ async function init() {
     state.health = h;
     $("version").textContent = "v" + h.version;
     $("engine-badge").textContent = h.plate_engine === "yolo"
-      ? "🧠 Plaques : YOLOv8 · IA locale"
+      ? ""
       : "⚠️ Plaques : cascade Haar (repli)";
     $("max-files").textContent = h.max_files;
     $("max-mb").textContent = h.max_file_mb;
