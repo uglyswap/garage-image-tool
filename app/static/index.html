@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Garage Image Tool — Retouche photo pour garages</title>
+<title>Garage Image Tool : retouche photo pour garages</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
-<link rel="stylesheet" href="/style.css?v=8">
+<link rel="stylesheet" href="/style.css?v=10">
 </head>
 <body>
 <div id="login" class="login-overlay" hidden>
@@ -21,7 +21,7 @@
 <header>
   <div class="brand"><span class="logo">🛠️</span> <strong>Garage Image Tool</strong> <span id="version" class="tag"></span></div>
   <div class="head-right">
-    <div id="engine-badge" class="badge">Chargement…</div>
+    <div id="engine-badge" class="badge" hidden></div>
     <button id="btn-logout" class="btn small-inline" hidden>Se déconnecter</button>
   </div>
 </header>
@@ -38,18 +38,24 @@
       <div class="dz-inner">
         <div class="dz-icon">📷</div>
         <p><strong>Glissez vos photos ici</strong><br>ou cliquez pour parcourir</p>
-        <p class="hint">JPEG · PNG · WebP — jusqu'à <span id="max-files">60</span> images, <span id="max-mb">25</span> Mo par image</p>
+        <p class="hint">JPEG · PNG · WebP, jusqu'à <span id="max-files">60</span> images, <span id="max-mb">25</span> Mo par image</p>
       </div>
     </div>
     <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp" multiple hidden>
     <div id="thumbs" class="thumbs"></div>
     <div class="options">
-      <label class="opt"><input type="checkbox" id="blur-enabled" checked> Flouter les plaques d'immatriculation</label>
+      <label class="opt"><input type="checkbox" id="blur-enabled" checked> Masquer les plaques d'immatriculation</label>
       <div class="opt strength" id="strength-row">
         <span>Intensité du flou</span>
         <input type="range" id="blur-strength" min="1" max="5" value="3">
         <span id="strength-val" class="val">3</span>
       </div>
+      <label class="opt">Plaques
+        <select id="plate-style">
+          <option value="blur">Flou</option>
+          <option value="white">Rectangle blanc</option>
+        </select>
+      </label>
       <label class="opt">Format
         <select id="out-format">
           <option value="jpeg">JPEG (léger)</option>
@@ -58,14 +64,8 @@
       </label>
       <label class="opt">Détourage
         <select id="rembg-model">
-          <option value="birefnet-general-lite" selected>Maximum — BiRefNet</option>
-          <option value="isnet-general-use">Rapide — ISNet</option>
-        </select>
-      </label>
-      <label class="opt">Plaques
-        <select id="plate-style">
-          <option value="blur">Flou</option>
-          <option value="white">Rectangle blanc</option>
+          <option value="birefnet-general-lite" selected>Maximum (BiRefNet)</option>
+          <option value="isnet-general-use">Rapide (ISNet)</option>
         </select>
       </label>
     </div>
@@ -73,7 +73,7 @@
       <button id="btn-process" class="btn primary" disabled>🚀 Lancer le traitement</button>
       <button id="btn-reset" class="btn" disabled>Vider</button>
       <button id="btn-download-all" class="btn success" disabled hidden>⬇️ Tout télécharger</button>
-      <span id="dl-hint" class="hint" hidden>Si le navigateur le demande, autorisez le « téléchargement de plusieurs fichiers » — une seule fois suffit.</span>
+      <span id="dl-hint" class="hint" hidden>Si le navigateur le demande, autorisez le « téléchargement de plusieurs fichiers » : une seule fois suffit.</span>
     </div>
     <div id="progress" class="progress" hidden>
       <div class="bar"><div id="bar-fill"></div></div>
@@ -83,9 +83,9 @@
   </section>
 </main>
 <footer>
-  <span>🔒 Traitement 100 % local sur ce serveur — aucune donnée n'est envoyée à des tiers.</span>
+  <span>🔒 Traitement 100 % local sur ce serveur : aucune donnée n'est envoyée à des tiers.</span>
   <a href="/api/docs" target="_blank">API</a>
 </footer>
-<script src="/app.js?v=7"></script>
+<script src="/app.js?v=10"></script>
 </body>
 </html>
