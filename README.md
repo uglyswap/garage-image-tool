@@ -1,6 +1,6 @@
 # 🛠️ Garage Image Tool
 
-**Retouche photo pour garages automobiles** — détourage automatique des véhicules, remplacement du fond, floutage des plaques d'immatriculation.
+**Retouche photo pour garages automobiles** : détourage automatique des véhicules, remplacement du fond, floutage des plaques d'immatriculation.
 
 100 % Python · 100 % local (aucune API externe) · Un seul prérequis : **Docker**.
 
@@ -8,14 +8,14 @@
 
 ## ✨ Fonctionnalités
 
-- 📤 **Upload en masse** — glissez-déposez jusqu'à 60 images (JPEG / PNG / WebP, 25 Mo max par image)
+- 📤 **Upload en masse** : glissez-déposez jusqu'à 60 images (JPEG / PNG / WebP, 25 Mo max par image)
 - 🔐 **Authentification** par mot de passe unique (`APP_PASSWORD`) : écran de connexion, session sécurisée, accès API par `Bearer`
 - ✂️ **Détourage automatique** du véhicule avec rembg : BiRefNet (qualité maximale, par défaut) ou ISNet (rapide), inférence CPU locale
 - ✏️ **Retouche manuelle** d'une plaque oubliée : polygone dessiné à la souris, flou ou rectangle blanc
-- 🖼️ **Bibliothèque d'arrière-plans** — enregistrez vos fonds (showroom, extérieur, fond couleur…) et sélectionnez celui que vous voulez ; le fond est recadré en mode *cover*. Mode **PNG transparent** également disponible.
-- 🔒 **Floutage des plaques d'immatriculation** — détection YOLOv8 **pays-agnostique** (UE, US, Asie, motos…) puis affinage par contours : **seule la plaque est floutée**, jamais la moitié de la voiture. Pixelisation + flou gaussien = illisible même en zoomant.
+- 🖼️ **Bibliothèque d'arrière-plans** : enregistrez vos fonds (showroom, extérieur, fond couleur…) et sélectionnez celui que vous voulez ; le fond est recadré en mode *cover*. Mode **PNG transparent** également disponible.
+- 🔒 **Masquage des plaques d'immatriculation** (flou ou rectangle blanc) : détection YOLOv8 **pays-agnostique** (UE, US, Asie, motos…) puis ajustement d'un **quadrilatère exact** (incliné, en perspective) : **seule la plaque est masquée**, jamais la moitié de la voiture. Pixelisation + flou gaussien = illisible même en zoomant.
 - ⚡ **Traitement bulk parallèle** avec progression en direct image par image
-- ⬇️ **Téléchargement en un clic** de toutes les images traitées (fichiers individuels téléchargés en rafale contrôlée — pas d'archive ZIP)
+- ⬇️ **Téléchargement en un clic** de toutes les images traitées (fichiers individuels téléchargés en rafale contrôlée : pas d'archive ZIP)
 - 🧹 **Purge automatique** : les photos originales (non floutées) sont supprimées dès la fin du traitement, les résultats après 24 h (`JOB_TTL_MINUTES`)
 - 🇫🇷 Interface web en français, responsive, zéro dépendance JS (vanilla)
 - 📚 **API REST** documentée (FastAPI / Swagger) pour intégration
@@ -55,8 +55,8 @@ docker run -d --name garage-image-tool \
 
 ## 🧠 Comment ça marche
 
-1. **Détection des plaques** — un YOLOv8 exporté en ONNX (inférence `onnxruntime`, 100 % CPU) localise les plaques. Le modèle détecte la *géométrie* du rectangle de plaque, pas son texte : il fonctionne donc quel que soit le pays (plaques européennes, américaines, asiatiques, motos…). Un **affinage par contours** resserre ensuite la boîte sur la plaque réelle.
-2. **Floutage** — pixelisation + flou gaussien combinés, appliqués **uniquement à l'intérieur de la plaque** via un masque aux bords adoucis (dilatation ≤ 8 px). Léger assombrissement pour tuer les reflets lisibles.
+1. **Détection des plaques** : un YOLOv8 exporté en ONNX (inférence `onnxruntime`, 100 % CPU) localise les plaques. Le modèle détecte la *géométrie* du rectangle de plaque, pas son texte : il fonctionne donc quel que soit le pays (plaques européennes, américaines, asiatiques, motos…). Un **ajustement par contour fermé** cherche ensuite, dans la boîte, le quadrilatère à 4 coins de la plaque (incliné ou en trapèze). À défaut, la boîte est réduite de 3 % plutôt qu'agrandie.
+2. **Masquage** : pixelisation + flou gaussien combinés (ou rectangle blanc), appliqués **uniquement à l'intérieur de la plaque** via un masque aux bords adoucis (marge de 3 % de la hauteur de la plaque). Léger assombrissement pour tuer les reflets lisibles.
 3. **Détourage** : rembg isole le véhicule avec un canal alpha nettoyé (`post_process_mask`, suppression des îlots flottants). Modèle BiRefNet par défaut (qualité maximale) ou ISNet (rapide) ; U²-Net est embarqué comme modèle de repli.
 4. **Fusion** : le véhicule est posé sur l'arrière-plan choisi (recadré *cover* aux dimensions d'origine), aligné en bas et centré, ou exporté sur fond transparent (PNG).
 
@@ -81,7 +81,8 @@ Variables d'environnement (toutes optionnelles) :
 | `MAX_FILES` | `60` | Nombre maximal d'images par lot |
 | `JOB_TTL_MINUTES` | `1440` | Durée de conservation des résultats avant purge (24 h) |
 | `REMBG_MODEL` / `REMBG_MAX_MODEL` / `REMBG_FAST_MODEL` | `birefnet-general-lite` / `birefnet-general-lite` / `isnet-general-use` | Modèles de détourage proposés |
-| `PLATE_CONF_THRESHOLD` | `0.35` | Seuil de confiance de la détection de plaques |
+| `PLATE_CONF_THRESHOLD` | `0.30` | Seuil de confiance de la détection de plaques |
+| `PLATE_WEAK_THRESHOLD` | `0.2` | Détections entre ce seuil et le précédent : retenues seulement si un contour de plaque net est trouvé (`0` = désactivé) |
 | `PLATE_MODEL_PATH` | `/app/models/plate_yolov8.onnx` | Chemin du détecteur YOLO ONNX |
 | `DATA_DIR` | `/data` | Données persistantes (fonds + jobs) |
 | `MODELS_DIR` | `/app/models` | Emplacement des modèles |
@@ -132,7 +133,7 @@ curl -s -H "$AUTH" http://localhost:8000/api/jobs/$JOB
 | `birefnet-general-lite.onnx` | ~224 Mo | Détourage qualité maximale (BiRefNet, par défaut) | Releases officielles [rembg](https://github.com/danielgatis/rembg) |
 | `isnet-general-use.onnx` | ~178 Mo | Détourage rapide (ISNet) | Releases officielles [rembg](https://github.com/danielgatis/rembg) |
 | `u2net.onnx` | ~176 Mo | Détourage de repli (U²-Net) | Releases officielles [rembg](https://github.com/danielgatis/rembg) |
-| `plate_yolov8.onnx` | ~38 Mo | Détection de plaques (YOLO11s) | [morsetechlab/yolov11-license-plate-detection](https://huggingface.co/morsetechlab/yolov11-license-plate-detection) (Hugging Face, ~72k téléchargements) — repli auto : [ml-debi/yolov8-license-plate-detection](https://huggingface.co/ml-debi/yolov8-license-plate-detection) |
+| `plate_yolov8.onnx` | ~38 Mo | Détection de plaques (YOLO11s) | [morsetechlab/yolov11-license-plate-detection](https://huggingface.co/morsetechlab/yolov11-license-plate-detection) (Hugging Face, ~72k téléchargements) : repli auto : [ml-debi/yolov8-license-plate-detection](https://huggingface.co/ml-debi/yolov8-license-plate-detection) |
 
 Les modèles sont téléchargés au **build** (script `scripts/download_models.py`, idempotent) puis embarqués dans l'image. Chaque fichier est **vérifié par SHA-256** : si une source distante change légitimement, mettez à jour l'empreinte dans le script.
 
@@ -148,7 +149,7 @@ garage-image-tool/
 │   ├── main.py            # API FastAPI
 │   ├── auth.py            # Authentification (mot de passe, session, limiteur)
 │   ├── processing.py      # Pipeline : détourage + fond + flou
-│   ├── plate_detector.py  # YOLO ONNX + repli Haar + affinage contours
+│   ├── plate_detector.py  # YOLO ONNX + repli Haar + ajustement du quadrilatère
 │   ├── store.py           # Persistance fonds / jobs
 │   ├── config.py          # Configuration
 │   └── static/            # Frontend (HTML/CSS/JS vanilla)
@@ -182,8 +183,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## ⚠️ Limites connues
 
-- Plaques **très petits ou très angulées** (photo lointaine, vue arrière en contre-plongeon extrême) : la détection peut échouer. Vérifiez le badge « plaques floutées » par image dans l'interface.
-- Le détourage peut occasionnellement accrocher des reflets complexes (vitres très teintées) — rare sur des photos de véhicule standard.
+- Plaques **très petits ou très angulées** (photo lointaine, vue arrière en contre-plongée extrême) : la détection peut échouer. Vérifiez le badge « plaques floutées » par image dans l'interface.
+- Le détourage peut occasionnellement accrocher des reflets complexes (vitres très teintées), rare sur des photos de véhicule standard.
 - En mode repli Haar (sans modèle ONNX), la couverture pays est réduite.
 - Téléchargement multiple : Chrome/Firefox demandent une autorisation unique « télécharger plusieurs fichiers ». Safari/iOS peuvent limiter le nombre de téléchargements consécutifs.
 
@@ -196,4 +197,4 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## 📄 Licence
 
-MIT — voir [LICENSE](LICENSE).
+MIT : voir [LICENSE](LICENSE).
