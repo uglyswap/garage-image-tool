@@ -192,10 +192,10 @@ def _plate_mask(shape, box):
     if box.pts:
         pts = np.array(box.pts, dtype=np.float32)
         center = pts.mean(axis=0)
-        expanded = center + (pts - center) * 1.12
+        expanded = center + (pts - center) * 1.02
         cv2.fillPoly(mask, [np.round(expanded).astype(np.int32)], 255)
     else:
-        pad = max(2, min(8, int(box.h * 0.08)))
+        pad = max(1, min(3, int(box.h * 0.02)))
         cv2.rectangle(mask,
                       (max(0, box.x1 - pad), max(0, box.y1 - pad)),
                       (min(w, box.x2 + pad), min(h, box.y2 + pad)), 255, -1)

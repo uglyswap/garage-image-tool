@@ -83,7 +83,26 @@ class PlateDetector:
             boxes = self._detect_haar(bgr)
         if config.PLATE_CLASSIC_PASS:
             boxes = self._merge_boxes(boxes, self._detect_classic(bgr, boxes))
-        return [self._refine(bgr, b) for b in boxes]
+        refined = [self._refine(bgr, b) for b in boxes]
+        # Shrink : YOLO détecte 10-20% plus large que la plaque réelle
+        for b in refined:
+            cx = (b.x1 + b.x2) / 2
+            cy = (b.y1 + b.y2) / 2
+            hw = (b.x2 - b.x1) / 2 * 0.95
+            hh = (b.y2 - b.y1) / 2 * 0.82
+            b.x1 = int(max(0, cx - hw))
+            b.x2 = int(cx + hw)
+            b.y1 = int(max(0, cy - hh))
+            b.y2 = int(cy + hh)
+            if b.pts:
+                import numpy as np
+                arr = np.array(b.pts, dtype=np.float32)
+                c = arr.mean(axis=0)
+                for p in arr:
+                    p[0] = c[0] + (p[0] - c[0]) * 0.95
+                    p[1] = c[1] + (p[1] - c[1]) * 0.82
+                b.pts = arr.tolist()
+        return refined
 
     def _detect_classic(self, bgr, existing):
         """Passe de sauvetage classique (sans IA) : les modeles YOLO ratent
