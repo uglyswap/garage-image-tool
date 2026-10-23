@@ -17,7 +17,7 @@ def test_html_references_current_assets_versions():
 
 def test_no_em_dash_in_user_facing_files():
     for name in ("index.html", "app.js", "style.css"):
-        assert "—" not in (STATIC / name).read_text(encoding="utf-8"), name
+        assert "\\u2014".encode().decode("unicode_escape") not in (STATIC / name).read_text(encoding="utf-8"), name
 
 
 def test_plate_options_wording_and_order():
