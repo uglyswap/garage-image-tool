@@ -206,7 +206,12 @@ async def create_job(
             raise HTTPException(415, "Format non supporté : " + str(up.filename))
         payloads.append((up.filename or "image", await _read_limited(up, config.MAX_FILE_MB)))
 
-    job = jobs.create([name for name, _ in payloads])
+    job = jobs.create([name for name, _ in payloads], opts={
+        "bg_mode": bg_mode, "background_id": background_id,
+        "blur_enabled": blur_enabled, "blur_strength": blur_strength,
+        "out_format": out_format, "jpeg_quality": jpeg_quality,
+        "rembg_model": rembg_model, "plate_style": plate_style,
+    })
     jobs.save_status(job)
     for i, (_name, data) in enumerate(payloads):
         in_path = os.path.join(jobs.job_dir(job.id), "in_" + str(i))
