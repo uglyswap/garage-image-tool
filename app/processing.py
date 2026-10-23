@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _session_lock = threading.Lock()
 _sessions = {}
+PLATE_MASK_MARGIN = 0.03  # marge du masque autour de la plaque, en part de sa hauteur
 _birefnet_gate = threading.Semaphore(1)
 
 
@@ -231,18 +232,14 @@ def _load_background(bg_bytes: bytes, size: tuple[int, int]) -> Image.Image:
 def _plate_mask(shape, box):
     """Masque de la plaque : quadrilatere incline si pts disponibles, sinon rectangle."""
     mask = np.zeros(shape[:2], dtype=np.uint8)
-    h, w = shape[:2]
     if box.pts:
-        pts = np.array(box.pts, dtype=np.float32)
-        center = pts.mean(axis=0)
-        expanded = center + (pts - center) * 1.02
-        cv2.fillPoly(mask, [np.round(expanded).astype(np.int32)], 255)
+        cv2.fillPoly(mask, [np.round(np.array(box.pts, dtype=np.float32)).astype(np.int32)], 255)
     else:
-        pad = max(1, min(3, int(box.h * 0.02)))
-        cv2.rectangle(mask,
-                      (max(0, box.x1 - pad), max(0, box.y1 - pad)),
-                      (min(w, box.x2 + pad), min(h, box.y2 + pad)), 255, -1)
-    return cv2.GaussianBlur(mask, (0, 0), sigmaX=2.5)
+        cv2.rectangle(mask, (box.x1, box.y1), (box.x2, box.y2), 255, -1)
+    # Marge fine et uniforme autour de la plaque (3 % de sa hauteur), bord adouci au minimum
+    r = max(1, int(round(PLATE_MASK_MARGIN * box.h)))
+    mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1)))
+    return cv2.GaussianBlur(mask, (0, 0), sigmaX=max(0.8, 0.25 * r + 0.6))
 
 
 def _blur_plate(arr_bgr: np.ndarray, box: PlateBox, strength: int) -> None:
