@@ -84,7 +84,7 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
         shifted.paste(cutout, (dx, dy), cutout)
         alpha_arr = np.asarray(shifted.getchannel("A"))
         cutout = shifted
-        plates = [PlateBox(b.x1 + dx, b.y1 + dy, b.x2 + dx, b.y2 + dy, b.score) for b in plates]
+        plates = _shift_plates(plates, dx, dy, image.width, image.height)
 
     if opts.bg_mode == "transparent":
         out_img = cutout
@@ -123,6 +123,22 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
 
 
 # ---------------------------------------------------------------------
+def _shift_plates(plates: list[PlateBox], dx: int, dy: int, width: int, height: int) -> list[PlateBox]:
+    """Décale les plaques (en conservant leurs coins inclinés) et les borne à l image.
+
+    Une plaque qui sort entièrement de l image, ou devient trop petite une fois
+    recadrée, est ignorée : plus d indices négatifs dans les slicings numpy."""
+    out: list[PlateBox] = []
+    for b in plates:
+        x1, y1 = max(0, b.x1 + dx), max(0, b.y1 + dy)
+        x2, y2 = min(width, b.x2 + dx), min(height, b.y2 + dy)
+        if x2 - x1 < 4 or y2 - y1 < 4:
+            continue
+        pts = [[p[0] + dx, p[1] + dy] for p in b.pts] if b.pts else None
+        out.append(PlateBox(x1, y1, x2, y2, b.score, pts))
+    return out
+
+
 def _remove_background(image: Image.Image, model: str = None) -> Image.Image:
     from rembg import remove
 
@@ -280,16 +296,27 @@ def _blur_polygon(arr_bgr, pts, strength):
 
 
 def retouch_bytes(data: bytes, pts, strength: int = 3, fmt: str = "jpeg", style: str = "blur"):
-    """Applique la retouche polygonale (flou ou blanc) sur une image encodee."""
+    """Applique la retouche polygonale (flou ou blanc) sur une image encodee.
+
+    Le canal alpha d un PNG transparent est preserve (la retouche ne touche que les canaux couleur)."""
     arr = np.frombuffer(data, np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
     if img is None:
         raise ValueError("image illisible")
+    alpha = None
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    elif img.shape[2] == 4:
+        alpha = np.ascontiguousarray(img[:, :, 3])
+        img = np.ascontiguousarray(img[:, :, :3])
+    h, w = img.shape[:2]
+    poly_pts = [[min(max(int(p[0]), 0), w - 1), min(max(int(p[1]), 0), h - 1)] for p in pts]
     if style == "white":
-        poly = np.array([list(p) for p in pts], dtype=np.int32)
-        cv2.fillPoly(img, [poly], (250, 250, 250))
+        cv2.fillPoly(img, [np.array(poly_pts, dtype=np.int32)], (250, 250, 250))
     else:
-        _blur_polygon(img, [list(p) for p in pts], strength)
+        _blur_polygon(img, poly_pts, strength)
+    if alpha is not None:
+        img = np.dstack([img, alpha])
     ext = ".jpg" if fmt == "jpeg" else ".png"
     params = [cv2.IMWRITE_JPEG_QUALITY, 92] if fmt == "jpeg" else []
     ok, buf = cv2.imencode(ext, img, params)
