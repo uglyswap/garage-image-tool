@@ -145,7 +145,7 @@ footer a { color: var(--accent-2); text-decoration: none; }
 .login-box input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 15px; }
 .login-box input:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .login-error { color: #fca5a5; font-size: 13px; min-height: 18px; }
-/* Un display explicite (flex, inline-flex) écrase l'attribut hidden : on le rétablit pour ces éléments */
-.login-overlay[hidden], .open-banner[hidden], #btn-logout[hidden] { display: none; }
+/* Un display explicite (flex, inline-flex) écrase l'attribut hidden : on le rétablit partout */
+[hidden] { display: none !important; }
 .bg-item:focus-visible, #dropzone:focus-visible, .thumb .t-del:focus-visible, .bg-del:focus-visible,
 .r-dl:focus-visible, .r-rt:focus-visible, #rt-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
