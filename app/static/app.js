@@ -459,6 +459,8 @@ var rt = { jobId: null, index: null, pts: [], scale: 1 };
 function openRetouch(jobId, r) {
   if (!jobId) { alert("Retouche indisponible sur ce resultat."); return; }
   rt.jobId = jobId; rt.index = r.index; rt.pts = [];
+  /* Intensité de départ : celle choisie sur la page, modifiable ici pour cette retouche */
+  var strength = Math.min(5, Math.max(1, parseInt($("blur-strength").value, 10) || 3));
   var ov = document.createElement("div");
   ov.id = "rt-overlay";
   ov.setAttribute("role", "dialog");
@@ -468,9 +470,12 @@ function openRetouch(jobId, r) {
     '<div class="rt-head">✏️ Retouche : cliquez les points autour de la plaque (octogone), puis Appliquer' +
     '<button id="rt-close" title="Fermer (Échap)" aria-label="Fermer">✕</button></div>' +
     '<div id="rt-stage"></div>' +
-    '<div class="rt-actions"><button id="rt-apply" class="btn primary">Appliquer le flou</button>' +
+    '<div class="rt-actions"><button id="rt-apply" class="btn primary">Appliquer</button>' +
     '<button id="rt-reset" class="btn">Effacer les points</button>' +
     '<select id="rt-style" class="rt-select"><option value="blur">Flou</option><option value="white">Rectangle blanc</option></select>' +
+    '<div class="opt strength" id="rt-strength-row"><span>Intensité du flou</span>' +
+    '<input type="range" id="rt-strength" min="1" max="5" value="' + strength + '" aria-label="Intensité du flou">' +
+    '<span id="rt-strength-val" class="val">' + strength + '</span></div>' +
     '<span class="hint" id="rt-n">0 point</span>' +
     '<span class="hint">3 à 8 points : 4 points suffisent pour un rectangle incliné.</span></div>' +
     '</div>';
@@ -489,6 +494,10 @@ function openRetouch(jobId, r) {
     var rect = cv.getBoundingClientRect();
     rt.pts.push([Math.round((ev.clientX - rect.left) * rt.scale), Math.round((ev.clientY - rect.top) * rt.scale)]);
     drawRtPts();
+  });
+  $("rt-strength").addEventListener("input", function () { $("rt-strength-val").textContent = this.value; });
+  $("rt-style").addEventListener("change", function () {
+    $("rt-strength-row").classList.toggle("disabled", this.value === "white");  // sans effet sur le rectangle blanc
   });
   $("rt-apply").addEventListener("click", applyRetouch);
   $("rt-reset").addEventListener("click", function () { rt.pts = []; drawRtPts(); });
@@ -544,7 +553,7 @@ async function applyRetouch() {
     var res = await api("/api/retouch/" + rt.jobId + "/" + rt.index, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ polygon: rt.pts, strength: parseInt($("blur-strength").value, 10) || 3, style: $("rt-style").value })
+      body: JSON.stringify({ polygon: rt.pts, strength: parseInt($("rt-strength").value, 10) || 3, style: $("rt-style").value })
     });
     if (!res.ok) {
       var err = await res.json().catch(function () { return {}; });
