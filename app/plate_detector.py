@@ -33,6 +33,7 @@ class PlateBox:
     x2: int
     y2: int
     score: float
+    pts: list = None  # 4 coins [x,y] si plaque inclinée (minAreaRect)
 
     @property
     def w(self) -> int:
@@ -270,6 +271,7 @@ class PlateDetector:
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         roi_area = float(roi.shape[0] * roi.shape[1])
         best = None
+        best_cnt = None
         best_area = 0.0
         for cnt in contours:
             x, y, w, h = cv2.boundingRect(cnt)
@@ -281,9 +283,9 @@ class PlateDetector:
             area = float(w * h)
             if area <= best_area or area < 0.20 * roi_area:
                 continue
-            best, best_area = (x, y, w, h), area
-        if best is None:
-            return box
+            best, best_cnt, best_area = (x, y, w, h), cnt, area
+        if best is None or best_cnt is None:
+            return self._rotated_refine(roi, rx1, ry1, box)
         x, y, w, h = best
         nx1, ny1, nx2, ny2 = rx1 + x, ry1 + y, rx1 + x + w, ry1 + y + h
         ix1, iy1 = max(nx1, box.x1), max(ny1, box.y1)
@@ -292,7 +294,50 @@ class PlateDetector:
         union = float(box.w * box.h + w * h - inter)
         if union <= 0 or inter / union < 0.5 or (w * h) > 1.6 * float(box.w * box.h):
             return box
-        return PlateBox(nx1, ny1, nx2, ny2, box.score)
+        tilted = self._rotated_refine(roi, rx1, ry1, PlateBox(nx1, ny1, nx2, ny2, box.score))
+        return tilted if tilted is not None else PlateBox(nx1, ny1, nx2, ny2, box.score)
+
+    def _rotated_refine(self, roi, rx1, ry1, box):
+        """Détecte l angle réel de la plaque dans la ROI (minAreaRect).
+
+        Si un quadrilatère incliné plausible est trouvé (aire plausible,
+        ratio de plaque, angle hors axe), renvoie une PlateBox avec les
+        4 coins exacts — sinon None (la boîte axis-aligned est conservée)."""
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, np.ones((5, 3), np.uint8))
+        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+        roi_area = float(roi.shape[0] * roi.shape[1])
+        best_cnt, best_area = None, 0.0
+        for cnt in contours:
+            a = cv2.contourArea(cnt)
+            if a > best_area:
+                best_cnt, best_area = cnt, a
+        if best_cnt is None or best_area < 0.15 * roi_area:
+            return None
+        (cx, cy), (rw, rh), angle = cv2.minAreaRect(best_cnt)
+        if rw < 25 or rh < 8:
+            return None
+        lo, hi = min(rw, rh), max(rw, rh)
+        ratio = hi / max(1.0, lo)
+        if not 1.4 <= ratio <= 8.5:
+            return None
+        box_area = float(box.w * box.h)
+        if best_area < 0.25 * box_area or best_area > 1.1 * box_area:
+            return None
+        pts = cv2.boxPoints(((cx, cy), (rw, rh), angle)).tolist()
+        nx1 = int(min(p[0] for p in pts)) + rx1
+        ny1 = int(min(p[1] for p in pts)) + ry1
+        nx2 = int(max(p[0] for p in pts)) + rx1
+        ny2 = int(max(p[1] for p in pts)) + ry1
+        nx1, ny1 = max(0, nx1), max(0, ny1)
+        clipped = PlateBox(nx1, ny1, nx2, ny2, box.score)
+        if clipped.w < 12 or clipped.h < 8:
+            return None
+        clipped.pts = [[p[0] + rx1, p[1] + ry1] for p in pts]
+        return clipped
 
 
 # Singleton partagé (chargé au démarrage de l'app)
