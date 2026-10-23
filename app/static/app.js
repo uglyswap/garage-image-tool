@@ -6,19 +6,90 @@ var PSEUDO = [
   { id: "_transparent", name: "Fond transparent (PNG)", icon: "✨" }
 ];
 
-var state = { files: [], bg: "_original", bgs: [], jobId: null, health: null, lastJob: null };
+var state = { files: [], bg: "_original", bgs: [], jobId: null, health: null, lastJob: null, auth: null, wired: false };
 
 function $(id) { return document.getElementById(id); }
 function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
   return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
 }); }
+/* Message lisible depuis le champ "detail" de FastAPI (chaîne ou liste d'erreurs de validation) */
+function detailText(detail) {
+  if (Array.isArray(detail)) return detail.map(function (d) { return d.msg || ""; }).join(", ");
+  return detail ? String(detail) : "";
+}
 function fmtSize(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + " Mo" : Math.max(1, Math.round(b / 1024)) + " Ko"; }
+
+/* ------------------------------ Authentification --------------------------- */
+/* fetch qui renvoie à l'écran de connexion sur 401 (l'erreur porte auth = true) */
+async function api(url, opts) {
+  var res = await fetch(url, opts);
+  if (res.status === 401) {
+    showLogin();
+    var e = new Error("Authentification requise");
+    e.auth = true;
+    throw e;
+  }
+  return res;
+}
+
+function showLogin() {
+  $("login").hidden = false;
+  $("login-error").textContent = "";
+  $("login-password").value = "";
+  $("login-password").focus();
+}
+
+async function submitLogin(ev) {
+  ev.preventDefault();
+  $("login-error").textContent = "";
+  try {
+    var res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: $("login-password").value })
+    });
+    if (res.status === 204) {
+      $("login").hidden = true;
+      state.auth = { auth_required: true, authenticated: true };
+      await start();
+      return;
+    }
+    var err = await res.json().catch(function () { return {}; });
+    $("login-error").textContent = res.status === 429
+      ? "Trop d'essais, réessayez dans quelques minutes."
+      : (err.detail || "Connexion impossible");
+  } catch (e) {
+    $("login-error").textContent = "Erreur réseau : " + e.message;
+  }
+}
+
+async function logout() {
+  await fetch("/api/auth/logout", { method: "POST" }).catch(function () {});
+  location.reload();
+}
 
 /* ------------------------------ Initialisation ----------------------------- */
 async function init() {
   try {
-    var h = await fetch("/api/health").then(function (r) { return r.json(); });
+    state.auth = await fetch("/api/auth/status").then(function (r) { return r.json(); });
+  } catch (e) {
+    state.auth = null;
+  }
+  $("login-form").addEventListener("submit", submitLogin);
+  $("btn-logout").addEventListener("click", logout);
+  $("open-banner").hidden = !(state.auth && state.auth.auth_required === false);
+  if (state.auth && state.auth.auth_required && !state.auth.authenticated) {
+    showLogin();
+    return;
+  }
+  await start();
+}
+
+async function start() {
+  $("btn-logout").hidden = !(state.auth && state.auth.auth_required);
+  try {
+    var h = await api("/api/health").then(function (r) { return r.json(); });
     state.health = h;
     $("version").textContent = "v" + h.version;
     $("engine-badge").textContent = h.plate_engine === "yolo"
@@ -27,45 +98,66 @@ async function init() {
     $("max-files").textContent = h.max_files;
     $("max-mb").textContent = h.max_file_mb;
   } catch (e) {
+    if (e.auth) return;
     $("engine-badge").textContent = "⚠️ API indisponible";
   }
   await refreshBackgrounds();
-  wire();
+  if (!state.wired) { wire(); state.wired = true; }
 }
 
 async function refreshBackgrounds() {
   try {
-    state.bgs = await fetch("/api/backgrounds").then(function (r) { return r.json(); });
+    state.bgs = await api("/api/backgrounds").then(function (r) { return r.json(); });
   } catch (e) { state.bgs = []; }
   renderBackgrounds();
 }
 
 /* -------------------------------- Fonds ------------------------------------ */
-function renderBackgrounds() {
+/* Rend un élément non-bouton activable au clavier (Entrée / Espace). handler(viaKeyboard) */
+function makeActivatable(el, handler, pressed) {
+  el.setAttribute("role", "button");
+  el.tabIndex = 0;
+  if (pressed !== undefined) el.setAttribute("aria-pressed", String(pressed));
+  el.addEventListener("click", function () { handler(false); });
+  el.addEventListener("keydown", function (ev) {
+    if (ev.target !== el) return; /* ne pas capter Entrée sur le bouton ✕ interne */
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); handler(true); }
+  });
+}
+
+function renderBackgrounds(focusId) {
   var list = $("bg-list");
   list.innerHTML = "";
   PSEUDO.forEach(function (p) {
     var el = document.createElement("div");
     el.className = "bg-item pseudo" + (state.bg === p.id ? " selected" : "");
+    el.setAttribute("data-id", p.id);
+    el.setAttribute("aria-label", p.name);
     el.innerHTML = '<span class="bg-icon">' + p.icon + '</span><span class="bg-name">' + p.name + '</span>';
-    el.addEventListener("click", function () { state.bg = p.id; renderBackgrounds(); });
+    makeActivatable(el, function (viaKey) { state.bg = p.id; renderBackgrounds(viaKey ? p.id : null); }, state.bg === p.id);
     list.appendChild(el);
   });
   state.bgs.forEach(function (b) {
     var el = document.createElement("div");
     el.className = "bg-item" + (state.bg === b.id ? " selected" : "");
+    el.setAttribute("data-id", b.id);
+    el.setAttribute("aria-label", b.name);
     el.innerHTML = '<img src="' + b.url + '" alt="" loading="lazy">' +
       '<span class="bg-name">' + esc(b.name) + '</span>' +
-      '<button class="bg-del" title="Supprimer">✕</button>';
-    el.addEventListener("click", function () { state.bg = b.id; renderBackgrounds(); });
+      '<button class="bg-del" title="Supprimer" aria-label="Supprimer ce fond">✕</button>';
+    makeActivatable(el, function (viaKey) { state.bg = b.id; renderBackgrounds(viaKey ? b.id : null); }, state.bg === b.id);
     el.querySelector(".bg-del").addEventListener("click", function (ev) { ev.stopPropagation(); deleteBg(b.id); });
     list.appendChild(el);
   });
+  if (focusId) {
+    var target = list.querySelector('[data-id="' + focusId + '"]');
+    if (target) target.focus();
+  }
 }
 
 async function deleteBg(id) {
   if (!confirm("Supprimer cet arrière-plan ?")) return;
-  await fetch("/api/backgrounds/" + id, { method: "DELETE" });
+  try { await api("/api/backgrounds/" + id, { method: "DELETE" }); } catch (e) { if (e.auth) return; }
   if (state.bg === id) state.bg = "_original";
   await refreshBackgrounds();
 }
@@ -136,29 +228,36 @@ async function process() {
   renderPlaceholder(state.files.length);
 
   try {
-    var res = await fetch("/api/jobs", { method: "POST", body: fd });
+    var res = await api("/api/jobs", { method: "POST", body: fd });
     if (!res.ok) {
       var err = await res.json().catch(function () { return {}; });
-      var detail = err.detail;
-      if (Array.isArray(detail)) detail = detail.map(function (d) { return d.msg || ""; }).join(", ");
+      var detail = detailText(err.detail);
       throw new Error(detail || ("HTTP " + res.status));
     }
     var j = await res.json();
     state.jobId = j.job_id;
+    pollErrors = 0;
     poll();
   } catch (e) {
-    alert("Erreur : " + e.message);
+    if (!e.auth) alert("Erreur : " + e.message);
     $("progress").hidden = true;
     updateButtons();
   }
 }
 
+var pollErrors = 0;
+
 async function poll() {
   try {
-    var j = await fetch("/api/jobs/" + state.jobId).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    });
+    var res = await api("/api/jobs/" + state.jobId);
+    if (res.status === 404) {
+      $("progress-text").textContent = "Résultats expirés ou introuvables";
+      updateButtons();
+      return;
+    }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var j = await res.json();
+    pollErrors = 0;
     state.lastJob = j;
     renderResults(j);
     setProgress(j.done, j.total);
@@ -169,7 +268,15 @@ async function poll() {
       updateButtons();
       return;
     }
-  } catch (e) { /* réessaie au prochain tick */ }
+  } catch (e) {
+    if (e.auth) return;
+    pollErrors += 1;
+    if (pollErrors >= 5) {
+      $("progress-text").textContent = "Connexion au serveur perdue : " + e.message;
+      updateButtons();
+      return;
+    }
+  }
   setTimeout(poll, 800);
 }
 
@@ -191,6 +298,13 @@ function renderPlaceholder(n) {
   }
 }
 
+/* Libellé selon les options réellement utilisées par le job (flou, rectangle blanc, désactivé) */
+function plateLabel(j, n) {
+  if (j.blur_enabled === false) return "Plaques non traitées";
+  var s = n > 1 ? "s" : "";
+  return n + " plaque" + s + (j.plate_style === "white" ? " masquée" : " floutée") + s;
+}
+
 function renderResults(j) {
   j.results.forEach(function (r) {
     var el = $("res-" + r.index);
@@ -199,7 +313,7 @@ function renderResults(j) {
     var ph = "⏳";
     if (r.status === "processing") { meta = "Traitement en cours…"; ph = "🔄"; }
     else if (r.status === "done") {
-      meta = '<span class="plates">' + r.plates + " plaque" + (r.plates > 1 ? "s" : "") + " floutée" + (r.plates > 1 ? "s" : "") + "</span>";
+      meta = '<span class="plates">' + plateLabel(j, r.plates) + "</span>";
       ph = "✅";
     } else if (r.status === "error") {
       meta = '<span class="err">❌ ' + esc(r.error || "Erreur") + "</span>";
@@ -256,6 +370,9 @@ function reset() {
 function wire() {
   var dz = $("dropzone");
   dz.addEventListener("click", function () { $("file-input").click(); });
+  dz.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file-input").click(); }
+  });
   dz.addEventListener("dragover", function (e) { e.preventDefault(); dz.classList.add("drag"); });
   dz.addEventListener("dragleave", function () { dz.classList.remove("drag"); });
   dz.addEventListener("drop", function (e) {
@@ -272,16 +389,18 @@ function wire() {
     fd.append("file", f, f.name);
     fd.append("name", f.name.replace(/\.[^.]+$/, ""));
     try {
-      var res = await fetch("/api/backgrounds", { method: "POST", body: fd });
+      var res = await api("/api/backgrounds", { method: "POST", body: fd });
       if (!res.ok) {
         var err = await res.json().catch(function () { return {}; });
-        alert("Erreur : " + (err.detail || res.status));
+        alert("Erreur : " + (detailText(err.detail) || res.status));
       } else {
         var created = await res.json();
         await refreshBackgrounds();
         state.bg = created.id;
         renderBackgrounds();
       }
+    } catch (e) {
+      if (!e.auth) alert("Erreur : " + e.message);
     } finally { this.value = ""; }
   });
 
@@ -302,9 +421,12 @@ function openRetouch(jobId, r) {
   rt.jobId = jobId; rt.index = r.index; rt.pts = [];
   var ov = document.createElement("div");
   ov.id = "rt-overlay";
+  ov.setAttribute("role", "dialog");
+  ov.setAttribute("aria-modal", "true");
+  ov.setAttribute("aria-label", "Retouche manuelle");
   ov.innerHTML = '<div class="rt-box">' +
     '<div class="rt-head">✏️ Retouche — cliquez les points autour de la plaque (octogone), puis Appliquer' +
-    '<button id="rt-close" title="Fermer">✕</button></div>' +
+    '<button id="rt-close" title="Fermer (Échap)" aria-label="Fermer">✕</button></div>' +
     '<div id="rt-stage"></div>' +
     '<div class="rt-actions"><button id="rt-apply" class="btn primary">Appliquer le flou</button>' +
     '<button id="rt-reset" class="btn">Effacer les points</button>' +
@@ -320,11 +442,9 @@ function openRetouch(jobId, r) {
   var cv = document.createElement("canvas");
   cv.id = "rt-canvas";
   $("rt-stage").appendChild(cv);
-  im.onload = function () {
-    cv.width = im.clientWidth; cv.height = im.clientHeight;
-    rt.scale = im.naturalWidth / im.clientWidth;
-    drawRtPts();
-  };
+  im.onload = layoutRt;
+  window.addEventListener("resize", layoutRt);
+  document.addEventListener("keydown", rtKeydown);
   cv.addEventListener("click", function (ev) {
     var rect = cv.getBoundingClientRect();
     rt.pts.push([Math.round((ev.clientX - rect.left) * rt.scale), Math.round((ev.clientY - rect.top) * rt.scale)]);
@@ -333,6 +453,20 @@ function openRetouch(jobId, r) {
   $("rt-apply").addEventListener("click", applyRetouch);
   $("rt-reset").addEventListener("click", function () { rt.pts = []; drawRtPts(); });
   $("rt-close").addEventListener("click", closeRetouch);
+  $("rt-close").focus();
+}
+
+/* Les points sont stockés en pixels de l'image réelle : seule l'échelle d'affichage change */
+function layoutRt() {
+  var im = $("rt-img"), cv = $("rt-canvas");
+  if (!im || !cv || !im.clientWidth) return;
+  cv.width = im.clientWidth; cv.height = im.clientHeight;
+  rt.scale = im.naturalWidth / im.clientWidth;
+  drawRtPts();
+}
+
+function rtKeydown(ev) {
+  if (ev.key === "Escape") closeRetouch();
 }
 
 function drawRtPts() {
@@ -358,6 +492,8 @@ function drawRtPts() {
 }
 
 function closeRetouch() {
+  window.removeEventListener("resize", layoutRt);
+  document.removeEventListener("keydown", rtKeydown);
   var ov = $("rt-overlay");
   if (ov) ov.remove();
 }
@@ -365,20 +501,20 @@ function closeRetouch() {
 async function applyRetouch() {
   if (rt.pts.length < 3) { alert("Placez au moins 3 points autour de la plaque."); return; }
   try {
-    var res = await fetch("/api/retouch/" + rt.jobId + "/" + rt.index, {
+    var res = await api("/api/retouch/" + rt.jobId + "/" + rt.index, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ polygon: rt.pts, strength: parseInt($("blur-strength").value, 10) || 3, style: $("rt-style").value })
     });
     if (!res.ok) {
       var err = await res.json().catch(function () { return {}; });
-      throw new Error(err.detail || ("HTTP " + res.status));
+      throw new Error(detailText(err.detail) || ("HTTP " + res.status));
     }
     closeRetouch();
     var el = document.querySelector("#res-" + rt.index + " .r-thumb");
     if (el) el.src = el.src.split("?")[0] + "?t=" + Date.now();
   } catch (e) {
-    alert("Erreur : " + e.message);
+    if (!e.auth) alert("Erreur : " + e.message);
   }
 }
 

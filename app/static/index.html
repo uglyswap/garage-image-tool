@@ -5,12 +5,25 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Garage Image Tool — Retouche photo pour garages</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
-<link rel="stylesheet" href="/style.css?v=5">
+<link rel="stylesheet" href="/style.css?v=7">
 </head>
 <body>
+<div id="login" class="login-overlay" hidden>
+  <form id="login-form" class="login-box" autocomplete="on">
+    <h2>🔒 Connexion</h2>
+    <label for="login-password" class="hint">Mot de passe de l'outil</label>
+    <input type="password" id="login-password" autocomplete="current-password" maxlength="256" required>
+    <button type="submit" class="btn primary">Se connecter</button>
+    <div id="login-error" class="login-error" role="alert"></div>
+  </form>
+</div>
+<div id="open-banner" class="open-banner" role="alert" hidden>⚠️ Accès non protégé : définissez la variable d'environnement APP_PASSWORD pour activer l'authentification.</div>
 <header>
   <div class="brand"><span class="logo">🛠️</span> <strong>Garage Image Tool</strong> <span id="version" class="tag"></span></div>
-  <div id="engine-badge" class="badge">Chargement…</div>
+  <div class="head-right">
+    <div id="engine-badge" class="badge">Chargement…</div>
+    <button id="btn-logout" class="btn small-inline" hidden>Se déconnecter</button>
+  </div>
 </header>
 <main>
   <aside class="panel">
@@ -21,7 +34,7 @@
     <p class="hint">Cliquez sur un fond pour le sélectionner. Les fonds ajoutés sont enregistrés sur le serveur et restent disponibles d'une session à l'autre.</p>
   </aside>
   <section class="workspace">
-    <div id="dropzone">
+    <div id="dropzone" role="button" tabindex="0" aria-label="Ajouter des photos : glisser-déposer ou parcourir">
       <div class="dz-inner">
         <div class="dz-icon">📷</div>
         <p><strong>Glissez vos photos ici</strong><br>ou cliquez pour parcourir</p>
@@ -73,6 +86,6 @@
   <span>🔒 Traitement 100 % local sur ce serveur — aucune donnée n'est envoyée à des tiers.</span>
   <a href="/api/docs" target="_blank">API</a>
 </footer>
-<script src="/app.js?v=5"></script>
+<script src="/app.js?v=7"></script>
 </body>
 </html>
