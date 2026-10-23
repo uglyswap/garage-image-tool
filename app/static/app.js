@@ -1,4 +1,4 @@
-/* Garage Image Tool — frontend (vanilla JS, aucune dépendance) */
+/* Garage Image Tool : frontend (vanilla JS, aucune dépendance) */
 "use strict";
 
 var PSEUDO = [
@@ -92,14 +92,15 @@ async function start() {
     var h = await api("/api/health").then(function (r) { return r.json(); });
     state.health = h;
     $("version").textContent = "v" + h.version;
-    $("engine-badge").textContent = h.plate_engine === "yolo"
-      ? "🧠 Plaques : YOLOv8 · IA locale"
-      : "⚠️ Plaques : cascade Haar (repli)";
+    var badge = $("engine-badge");
+    badge.hidden = h.plate_engine === "yolo";  // affiché seulement en cas de repli
+    if (!badge.hidden) badge.textContent = "⚠️ Plaques : cascade Haar (repli)";
     $("max-files").textContent = h.max_files;
     $("max-mb").textContent = h.max_file_mb;
   } catch (e) {
     if (e.auth) return;
     $("engine-badge").textContent = "⚠️ API indisponible";
+    $("engine-badge").hidden = false;
   }
   await refreshBackgrounds();
   if (!state.wired) { wire(); state.wired = true; }
@@ -302,7 +303,7 @@ function renderPlaceholder(n) {
 function plateLabel(j, n) {
   if (j.blur_enabled === false) return "Plaques non traitées";
   var s = n > 1 ? "s" : "";
-  return n + " plaque" + s + (j.plate_style === "white" ? " masquée" : " floutée") + s;
+  return n + " plaque" + s + " masquée" + s;
 }
 
 function renderResults(j) {
@@ -325,8 +326,15 @@ function renderResults(j) {
         ? '<img class="r-thumb" src="' + r.url + '" alt="">'
         : '<div class="r-ph">' + ph + "</div>") +
       '<div class="r-info"><div class="r-name">' + esc(r.name) + '</div><div class="r-meta">' + meta + "</div></div>" +
-      (r.status === "done" ? '<button class="r-dl">⬇️</button><button class="r-rt" title="Retouche manuelle">✏️</button>' : "");
+      (r.status === "done"
+        ? '<button class="r-view" title="Voir l’image" aria-label="Voir l’image">👁️</button>' +
+          '<button class="r-dl" title="Télécharger" aria-label="Télécharger">⬇️</button>' +
+          '<button class="r-rt" title="Retouche manuelle" aria-label="Retouche manuelle">✏️</button>'
+        : "");
     if (r.status === "done") {
+      el.querySelector(".r-view").addEventListener("click", function () {
+        openViewer(r);
+      });
       el.querySelector(".r-dl").addEventListener("click", function () {
         downloadOne(r);
       });
@@ -413,6 +421,38 @@ function wire() {
   $("btn-reset").addEventListener("click", reset);
 }
 
+/* ------------------------------ Visionneuse -------------------------------- */
+function openViewer(r) {
+  closeViewer();
+  var ov = document.createElement("div");
+  ov.id = "view-overlay";
+  ov.setAttribute("role", "dialog");
+  ov.setAttribute("aria-modal", "true");
+  ov.setAttribute("aria-label", "Aperçu de l'image");
+  ov.innerHTML = '<div class="rt-box">' +
+    '<div class="rt-head"><span class="view-title"></span>' +
+    '<button id="view-close" title="Fermer (Échap)" aria-label="Fermer">✕</button></div>' +
+    '<img id="view-img" alt="">' +
+    '</div>';
+  document.body.appendChild(ov);
+  ov.querySelector(".view-title").textContent = r.name || "Image";
+  $("view-img").src = r.url + "?t=" + Date.now();  // reflète une retouche manuelle récente
+  $("view-close").addEventListener("click", closeViewer);
+  ov.addEventListener("click", function (ev) { if (ev.target === ov) closeViewer(); });
+  document.addEventListener("keydown", viewerKeydown);
+  $("view-close").focus();
+}
+
+function viewerKeydown(ev) {
+  if (ev.key === "Escape") closeViewer();
+}
+
+function closeViewer() {
+  document.removeEventListener("keydown", viewerKeydown);
+  var ov = $("view-overlay");
+  if (ov) ov.remove();
+}
+
 /* ------------------------- Retouche manuelle ------------------------------- */
 var rt = { jobId: null, index: null, pts: [], scale: 1 };
 
@@ -425,14 +465,14 @@ function openRetouch(jobId, r) {
   ov.setAttribute("aria-modal", "true");
   ov.setAttribute("aria-label", "Retouche manuelle");
   ov.innerHTML = '<div class="rt-box">' +
-    '<div class="rt-head">✏️ Retouche — cliquez les points autour de la plaque (octogone), puis Appliquer' +
+    '<div class="rt-head">✏️ Retouche : cliquez les points autour de la plaque (octogone), puis Appliquer' +
     '<button id="rt-close" title="Fermer (Échap)" aria-label="Fermer">✕</button></div>' +
     '<div id="rt-stage"></div>' +
     '<div class="rt-actions"><button id="rt-apply" class="btn primary">Appliquer le flou</button>' +
     '<button id="rt-reset" class="btn">Effacer les points</button>' +
     '<select id="rt-style" class="rt-select"><option value="blur">Flou</option><option value="white">Rectangle blanc</option></select>' +
     '<span class="hint" id="rt-n">0 point</span>' +
-    '<span class="hint">3 à 8 points — 4 points suffisent pour un rectangle incliné.</span></div>' +
+    '<span class="hint">3 à 8 points : 4 points suffisent pour un rectangle incliné.</span></div>' +
     '</div>';
   document.body.appendChild(ov);
   var im = document.createElement("img");
