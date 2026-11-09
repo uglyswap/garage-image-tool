@@ -11,11 +11,15 @@
 - 📤 **Upload en masse** : glissez-déposez jusqu'à 60 images (JPEG / PNG / WebP, 25 Mo max par image)
 - 🔐 **Authentification** par mot de passe unique (`APP_PASSWORD`) : écran de connexion, session sécurisée, accès API par `Bearer`
 - ✂️ **Détourage automatique** du véhicule avec rembg : BiRefNet (qualité maximale, par défaut) ou ISNet (rapide), inférence CPU locale
-- ✏️ **Retouche manuelle** d'une plaque oubliée : polygone dessiné à la souris, flou ou rectangle blanc
+- ✏️ **Retouche manuelle** d'une plaque oubliée : polygone dessiné à la souris ou au doigt (zoom, annulation du dernier point), flou ou rectangle blanc. Chaque retouche reste **annulable**
+- 🎚️ **Réglages après traitement** : luminosité, contraste, saturation et vibrance, image par image ou sur tout un lot, avec aperçu immédiat. Quand le fond a été retiré ou remplacé, **seul le véhicule est modifié, le fond reste intact**
+- 🪄 **Harmonisation automatique** : un clic calcule pour chaque image les réglages qui rapprochent tout le lot (exposition, contraste, couleurs) pour une série de photos cohérente
+- 💾 **Enregistrer sous** : nom, format (JPEG, PNG, WebP), qualité et, sur Chrome et Edge, dossier de destination ; pour une image ou une sélection (archive ZIP)
 - 🖼️ **Bibliothèque d'arrière-plans** : enregistrez vos fonds (showroom, extérieur, fond couleur…) et sélectionnez celui que vous voulez ; le fond est recadré en mode *cover*. Mode **PNG transparent** également disponible.
 - 🔒 **Masquage des plaques d'immatriculation** (flou ou rectangle blanc) : détection YOLOv8 **pays-agnostique** (UE, US, Asie, motos…) puis ajustement d'un **quadrilatère exact** (incliné, en perspective) : **seule la plaque est masquée**, jamais la moitié de la voiture. Pixelisation + flou gaussien = illisible même en zoomant.
 - ⚡ **Traitement bulk parallèle** avec progression en direct image par image
-- ⬇️ **Téléchargement en un clic** de toutes les images traitées (fichiers individuels téléchargés en rafale contrôlée : pas d'archive ZIP)
+- ⬇️ **Téléchargement en un clic** de toutes les images traitées dans une archive ZIP
+- 🔁 **Reprise après rechargement** : la page retrouve le dernier lot tant que le serveur le conserve
 - 🧹 **Purge automatique** : les photos originales (non floutées) sont supprimées dès la fin du traitement, les résultats après 24 h (`JOB_TTL_MINUTES`)
 - 🇫🇷 Interface web en français, responsive, zéro dépendance JS (vanilla)
 - 📚 **API REST** documentée (FastAPI / Swagger) pour intégration
@@ -36,6 +40,15 @@ docker compose up -d --build
 L'outil est disponible sur **http://localhost:8000** : connectez-vous avec le mot de passe défini dans `.env`.
 
 > ⚠️ **Sans `APP_PASSWORD`, l'accès n'est pas protégé** : l'application démarre quand même (compatibilité), écrit un avertissement dans les logs et affiche un bandeau rouge dans l'interface. Ne l'exposez jamais sur Internet dans cet état.
+
+### Mise à jour d'un serveur
+
+```bash
+git pull && docker build -t garage-image-tool:latest .
+ROLLBACK_TAG=precedente sh scripts/deploy.sh latest   # contrôle de santé, retour arrière si échec
+```
+
+Derrière un reverse proxy HTTPS, définissez `BIND_ADDR=127.0.0.1` (ou l'adresse du pont Docker) et `TRUSTED_PROXY=1`.
 
 ### Avec Docker seul
 
@@ -59,6 +72,7 @@ docker run -d --name garage-image-tool \
 2. **Masquage** : pixelisation + flou gaussien combinés (ou rectangle blanc), appliqués **uniquement à l'intérieur de la plaque** via un masque aux bords adoucis (marge de 3 % de la hauteur de la plaque). Léger assombrissement pour tuer les reflets lisibles.
 3. **Détourage** : rembg isole le véhicule avec un canal alpha nettoyé (`post_process_mask`, suppression des îlots flottants). Modèle BiRefNet par défaut (qualité maximale) ou ISNet (rapide) ; U²-Net est embarqué comme modèle de repli.
 4. **Fusion** : le véhicule est posé sur l'arrière-plan choisi (recadré *cover* aux dimensions d'origine), aligné en bas et centré, ou exporté sur fond transparent (PNG).
+5. **Édition non destructive** : chaque résultat garde une image maître (plaques déjà masquées) et, si le fond a été remplacé, le masque du véhicule. Retouches manuelles et réglages sont rejoués sur le maître à chaque rendu : aucune perte de qualité par réenregistrements successifs, tout est annulable, et les réglages sont fondus selon le masque pour ne jamais toucher le fond. Le profil couleur (ICC) de la photo d'origine est conservé.
 
 > 🔁 **Repli automatique** : si le modèle ONNX de plaques est absent ou corrompu, une cascade de Haar OpenCV prend le relais (précision moindre, plaques de type européen). L'état du moteur est visible en haut de l'interface et sur `/api/health`.
 
@@ -75,6 +89,7 @@ Variables d'environnement (toutes optionnelles) :
 | `SESSION_HOURS` | `12` | Durée d'une session de connexion |
 | `TRUSTED_PROXY` | `0` | `1` si l'app est derrière un reverse proxy de confiance (lit `X-Forwarded-For` / `-Proto`) |
 | `MAX_WORKERS` | `2` (`1` dans le compose) | Workers CPU parallèles (rembg / détection) |
+| `BIND_ADDR` / `PORT` / `MEMORY_LIMIT` | `0.0.0.0` / `8000` / `8g` | Compose et `scripts/deploy.sh` uniquement : adresse et port publiés, plafond mémoire du conteneur |
 | `MAX_FILE_MB` | `25` | Taille maximale par image |
 | `MAX_TOTAL_MB` | `400` | Taille cumulée maximale d'un lot |
 | `MAX_PIXELS` | `120000000` | Dimensions maximales d'une image (protection mémoire) |
@@ -93,7 +108,7 @@ Variables d'environnement (toutes optionnelles) :
 
 La documentation Swagger interactive est disponible sur **`/api/docs`** (après connexion).
 
-**Authentification** : quand `APP_PASSWORD` est défini, tout `/api/*` exige soit le cookie de session (UI), soit l'en-tête `Authorization: Bearer <mot de passe>` (scripts). Seuls `/api/auth/*` et `/api/health` (réponse minimale) sont publics. Après 5 échecs en 5 minutes, l'IP reçoit un `429`.
+**Authentification** : quand `APP_PASSWORD` est défini, tout `/api/*` exige soit le cookie de session (UI), soit l'en-tête `Authorization: Bearer <mot de passe>` (scripts). Seuls `/api/auth/*` et `/api/health` (réponse minimale) sont publics. Après 5 échecs en 5 minutes, l'IP reçoit un `429` ; une session déjà ouverte depuis cette IP continue de fonctionner.
 
 | Méthode | Route | Description |
 |---|---|---|
@@ -107,7 +122,14 @@ La documentation Swagger interactive est disponible sur **`/api/docs`** (après 
 | POST | `/api/jobs` | Traite un lot d'images (multipart) |
 | GET | `/api/jobs/{id}` | Progression + résultats du job |
 | GET | `/api/results/{id}/{index}?download=1` | Télécharge un résultat |
+| GET | `/api/results/{id}/{index}?thumb=1` | Vignette WebP du résultat |
+| GET | `/api/results/{id}/{index}?download=1&format=webp&quality=90&name=clio` | « Enregistrer sous » : conversion (`jpeg`, `png`, `webp`) et renommage |
+| GET | `/api/jobs/{id}/zip?indices=0,2&format=jpeg` | Archive ZIP des résultats (tous par défaut) |
+| PUT | `/api/results/{id}/{index}/adjust` | Réglages : `{"brightness", "contrast", "saturation", "vibrance"}` de -100 à 100 |
+| GET | `/api/results/{id}/{index}/preview?brightness=20` | Aperçu réduit des réglages, sans rien enregistrer |
+| POST | `/api/jobs/{id}/auto-adjust` | Propose les réglages qui harmonisent le lot (`{"indices": [...]}` facultatif), sans les appliquer |
 | POST | `/api/retouch/{id}/{index}` | Retouche manuelle : `{"polygon": [[x,y],...], "strength": 1-5, "style": "blur\|white"}` (3 à 64 points, pixels de l'image réelle) |
+| DELETE | `/api/retouch/{id}/{index}` | Annule la dernière retouche manuelle (`?all=1` : toutes) |
 
 Exemple : traiter deux images avec remplacement de fond :
 
@@ -154,8 +176,10 @@ garage-image-tool/
 │   ├── config.py          # Configuration
 │   └── static/            # Frontend (HTML/CSS/JS vanilla)
 ├── scripts/
-│   └── download_models.py # Téléchargement + vérification SHA-256 des modèles (build)
-├── tests/                 # Tests pytest (auth, pipeline, API, store, modèles)
+│   ├── download_models.py # Téléchargement + vérification SHA-256 des modèles (build)
+│   └── deploy.sh          # Remplacement du conteneur avec contrôle de santé et retour arrière
+├── tests/                 # Tests pytest (auth, pipeline, rendu, API, store, modèles, interface)
+├── .github/workflows/     # Intégration continue : pytest à chaque push
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -183,16 +207,20 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## ⚠️ Limites connues
 
-- Plaques **très petits ou très angulées** (photo lointaine, vue arrière en contre-plongée extrême) : la détection peut échouer. Vérifiez le badge « plaques floutées » par image dans l'interface.
+- Plaques **très petites ou très inclinées** (photo lointaine, vue arrière en contre-plongée extrême) : la détection peut échouer. Vérifiez la mention « plaque(s) masquée(s) » de chaque image et complétez au besoin par une retouche manuelle.
 - Le détourage peut occasionnellement accrocher des reflets complexes (vitres très teintées), rare sur des photos de véhicule standard.
 - En mode repli Haar (sans modèle ONNX), la couverture pays est réduite.
-- Téléchargement multiple : Chrome/Firefox demandent une autorisation unique « télécharger plusieurs fichiers ». Safari/iOS peuvent limiter le nombre de téléchargements consécutifs.
+- Réglages sur une photo dont le **fond d'origine est conservé** : aucun détourage n'existe, ils s'appliquent donc à toute l'image.
+- Harmonisation automatique : la correction est volontairement partielle et plafonnée (une voiture noire et une blanche ne doivent pas finir de la même teinte). Elle se retouche ensuite image par image.
+- « Enregistrer sous » : le choix du dossier dépend du navigateur (Chrome et Edge sur ordinateur). Ailleurs, le fichier va dans le dossier de téléchargement habituel.
+- Espace disque : chaque résultat conserve son image maître jusqu'à la purge, soit environ le double de l'espace d'avant la v1.3.
 
 ## 🔐 RGPD / Confidentialité
 
 - Les images sont traitées **intégralement sur votre serveur** : aucune donnée n'est envoyée à un service tiers, aucun appel réseau pendant le traitement.
 - Les photos **originales (plaques non floutées) sont supprimées du disque dès la fin du traitement** ; seuls les résultats restent, puis sont **purgés automatiquement** (24 h par défaut, `JOB_TTL_MINUTES`).
-- L'accès est protégé par mot de passe (`APP_PASSWORD`) ; exposez l'outil derrière HTTPS (reverse proxy) et définissez `TRUSTED_PROXY=1` si vous en utilisez un.
+- L'image maître conservée pour les retouches a **déjà ses plaques masquées** : aucune version lisible des plaques ne reste sur le disque.
+- L'accès est protégé par mot de passe (`APP_PASSWORD`) ; exposez l'outil derrière HTTPS (reverse proxy) et définissez `TRUSTED_PROXY=1` si vous en utilisez un. Les réponses portent une politique de sécurité du contenu (CSP) stricte et, en HTTPS, l'en-tête HSTS.
 - Le floutage des plaques vise la conformité RGPD pour la publication de photos de véhicules (données personnelles = plaques + visages éventuels ; pensez aussi aux visages si présents).
 
 ## 📄 Licence

@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "Garage Image Tool"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "app", "static")

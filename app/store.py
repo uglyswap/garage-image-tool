@@ -15,7 +15,7 @@ import shutil
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from . import config
 
@@ -108,6 +108,13 @@ class ResultItem:
     out_file: str | None = None
     out_name: str | None = None
     resumes: int = 0             # reprises automatiques apres interruption (plafonnees par MAX_RESUMES)
+    master_file: str | None = None   # image maître (plaques masquées), jamais réécrite
+    mask_file: str | None = None     # masque du premier plan (fond remplacé)
+    thumb_file: str | None = None    # vignette de la grille
+    rev: int = 0                     # incrémenté à chaque rendu (invalide le cache navigateur)
+    edits: list = field(default_factory=list)    # retouches manuelles rejouées à chaque rendu (annulables)
+    adjust: dict = field(default_factory=dict)   # luminosité, contraste, saturation, vibrance
+    stats: dict | None = None    # mesures du premier plan, pour le réglage automatique du lot
 
 
 @dataclass
@@ -159,11 +166,7 @@ class JobStore:
             data = {
                 "id": job.id, "created": job.created, "total": job.total,
                 "done": job.done, "status": job.status, "opts": job.opts,
-                "results": [{"index": r.index, "name": r.name, "status": r.status,
-                             "error": r.error, "plates": r.plates,
-                             "out_file": r.out_file, "out_name": r.out_name,
-                             "resumes": r.resumes}
-                            for r in job.results],
+                "results": [asdict(r) for r in job.results],
             }
         path = os.path.join(self.job_dir(job.id), "status.json")
         tmp = path + ".tmp"
@@ -262,8 +265,8 @@ class JobStore:
                         count, len(self._resume))
         return count
 
-    def take_resume(self) -> list[tuple[str, int, str, dict, str]]:
-        """Renvoie les traitements à reprendre : (job_id, index, in_path, opts, job_id)."""
+    def take_resume(self) -> list[tuple[Job, int, str, dict, str]]:
+        """Renvoie les traitements à reprendre : (job, index, in_path, opts, job_id)."""
         with self._lock:
             rq = self._resume
             self._resume = []

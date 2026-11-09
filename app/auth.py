@@ -193,6 +193,10 @@ def install(app: FastAPI, auth: Auth) -> None:
         path = request.url.path
         if not auth.enabled or not path.startswith("/api/") or path in PUBLIC_API_PATHS:
             return await call_next(request)
+        # Session valide d'abord : un cookie signé ne se devine pas, il passe donc même si l'IP
+        # (partagée par tout un bureau) est verrouillée par les erreurs de saisie d'un collègue.
+        if auth.verify_token(request.cookies.get(COOKIE_NAME)):
+            return await call_next(request)
         ip = auth.client_ip(request)
         wait = auth.limiter.retry_after(ip)
         if wait:

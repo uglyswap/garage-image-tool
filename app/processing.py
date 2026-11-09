@@ -23,6 +23,15 @@ _session_lock = threading.Lock()
 _sessions = {}
 PLATE_MASK_MARGIN = 0.03  # marge du masque autour de la plaque, en part de sa hauteur
 _birefnet_gate = threading.Semaphore(1)
+MASTER_JPEG_QUALITY = 97
+THUMB_SIDE = 480          # plus grand côté des vignettes
+ADJUST_STRIP = 256        # réglages calculés par bandes : pic mémoire borné même sur une très grande image
+ADJUST_KEYS = ("brightness", "contrast", "saturation", "vibrance")
+LUMA = (0.299, 0.587, 0.114)
+BRIGHTNESS_GAIN = 0.5     # +100 = x1,5
+CONTRAST_GAIN = 0.6       # +100 = x1,6 autour du gris moyen
+AUTO_STRENGTH = 0.6       # part de l écart au lot corrigée par le réglage automatique
+AUTO_LIMIT = 0.35         # réglage automatique plafonné à +/-35
 
 
 def _session_options():
@@ -86,16 +95,21 @@ class ProcessOptions:
 
 @dataclass
 class ProcessResult:
-    data: bytes
-    fmt: str                         # "jpeg" | "png"
+    data: bytes                      # image maître (plaques déjà masquées), base des retouches et réglages
+    fmt: str                         # format de sortie demandé : "jpeg" | "png"
     plates_blurred: int
     width: int
     height: int
+    mask: bytes | None = None        # masque du premier plan (PNG niveaux de gris), mode "replace" uniquement
+    master_ext: str = "jpg"          # extension du fichier maître : "jpg" | "png"
 
 
 def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
     """Traite une image (bytes JPEG/PNG/WebP) et renvoie l image finale."""
-    image = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+    opened = Image.open(io.BytesIO(data))
+    # Profil couleur conservé jusqu'à la sortie (sinon les photos hors sRGB changent de teinte)
+    icc = opened.info.get("icc_profile") if opened.mode in ("RGB", "RGBA") else None
+    image = ImageOps.exif_transpose(opened)
     if image.mode != "RGB":
         image = image.convert("RGB")
 
@@ -142,12 +156,21 @@ def process_image(data: bytes, opts: ProcessOptions) -> ProcessResult:
             out_img.putalpha(Image.fromarray(alpha_arr))
 
     fmt = "png" if (opts.out_format == "png" or opts.bg_mode == "transparent") else "jpeg"
+    # Le maître est écrit une seule fois : retouches et réglages sont rejoués dessus à chaque rendu,
+    # donc aucune perte par réencodages successifs. JPEG 97 sans sous-échantillonnage, ou PNG sans perte.
     buf = io.BytesIO()
+    extra = {"icc_profile": icc} if icc else {}
     if fmt == "jpeg":
-        out_img.convert("RGB").save(buf, "JPEG", quality=opts.jpeg_quality, optimize=True, progressive=True)
+        out_img.convert("RGB").save(buf, "JPEG", quality=MASTER_JPEG_QUALITY, subsampling=0, **extra)
     else:
-        out_img.save(buf, "PNG", optimize=True)
-    return ProcessResult(buf.getvalue(), fmt, blurred, image.width, image.height)
+        out_img.save(buf, "PNG", compress_level=3, **extra)
+    mask = None
+    if opts.bg_mode == "replace" and alpha_arr is not None:
+        mbuf = io.BytesIO()
+        Image.fromarray(alpha_arr).save(mbuf, "PNG", compress_level=3)
+        mask = mbuf.getvalue()
+    return ProcessResult(buf.getvalue(), fmt, blurred, image.width, image.height,
+                         mask=mask, master_ext="png" if fmt == "png" else "jpg")
 
 
 # ---------------------------------------------------------------------
@@ -319,6 +342,23 @@ def _blur_polygon(arr_bgr, pts, strength):
     arr_bgr[y1:y2, x1:x2] = blended.astype(np.uint8)
 
 
+def _white_polygon(arr, pts):
+    """Polygone blanc aux bords adoucis (même rendu que le masque automatique)."""
+    poly = np.array(pts, dtype=np.int32)
+    pad = 4
+    x1 = max(0, int(poly[:, 0].min()) - pad)
+    y1 = max(0, int(poly[:, 1].min()) - pad)
+    x2 = min(arr.shape[1], int(poly[:, 0].max()) + pad + 1)
+    y2 = min(arr.shape[0], int(poly[:, 1].max()) + pad + 1)
+    if x2 <= x1 or y2 <= y1:
+        return
+    mask = np.zeros((y2 - y1, x2 - x1), dtype=np.uint8)
+    cv2.fillPoly(mask, [poly - np.array([x1, y1], dtype=np.int32)], 255)
+    m = (cv2.GaussianBlur(mask, (0, 0), sigmaX=1.0).astype(np.float32) / 255.0)[..., np.newaxis]
+    region = arr[y1:y2, x1:x2].astype(np.float32)
+    arr[y1:y2, x1:x2] = (region * (1.0 - m) + 250.0 * m).astype(np.uint8)
+
+
 def retouch_bytes(data: bytes, pts, strength: int = 3, fmt: str = "jpeg", style: str = "blur"):
     """Applique la retouche polygonale (flou ou blanc) sur une image encodee.
 
@@ -336,7 +376,7 @@ def retouch_bytes(data: bytes, pts, strength: int = 3, fmt: str = "jpeg", style:
     h, w = img.shape[:2]
     poly_pts = [[min(max(int(p[0]), 0), w - 1), min(max(int(p[1]), 0), h - 1)] for p in pts]
     if style == "white":
-        cv2.fillPoly(img, [np.array(poly_pts, dtype=np.int32)], (250, 250, 250))
+        _white_polygon(img, poly_pts)
     else:
         _blur_polygon(img, poly_pts, strength)
     if alpha is not None:
@@ -347,3 +387,186 @@ def retouch_bytes(data: bytes, pts, strength: int = 3, fmt: str = "jpeg", style:
     if not ok:
         raise ValueError("encodage impossible")
     return buf.tobytes(), fmt
+
+
+# ------------------------- Rendu non destructif ---------------------------
+@dataclass
+class Layers:
+    """Image maître décodée : couleurs, alpha éventuel, masque du premier plan, profil couleur."""
+    rgb: np.ndarray                  # H x W x 3, uint8
+    alpha: np.ndarray | None         # H x W, uint8 (PNG transparent)
+    fg_mask: np.ndarray | None       # H x W, uint8 : zone concernée par les réglages (None = toute l image)
+    icc: bytes | None
+    scale: float                     # taille décodée / taille réelle (1.0 hors aperçu)
+
+
+def load_layers(master: bytes, mask: bytes | None = None, max_side: int | None = None) -> Layers:
+    """Décode le maître (et le masque), éventuellement réduit pour un aperçu rapide."""
+    im = Image.open(io.BytesIO(master))
+    icc = im.info.get("icc_profile")
+    full_w = im.width
+    if max_side and im.format == "JPEG":
+        im.draft("RGB", (max_side, max_side))  # décodage JPEG directement à taille réduite
+    im = im.convert("RGBA" if (im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info) else "RGB")
+    if max_side and max(im.size) > max_side:
+        im.thumbnail((max_side, max_side), Image.BILINEAR)
+    arr = np.array(im)
+    alpha = np.ascontiguousarray(arr[:, :, 3]) if arr.shape[2] == 4 else None
+    rgb = np.ascontiguousarray(arr[:, :, :3])
+    fg_mask = alpha
+    if mask:
+        m = Image.open(io.BytesIO(mask)).convert("L")
+        if m.size != im.size:
+            m = m.resize(im.size, Image.BILINEAR)
+        fg_mask = np.array(m)
+    return Layers(rgb, alpha, fg_mask, icc, im.width / float(full_w))
+
+
+def clean_adjust(adjust: dict | None) -> dict:
+    """Réglages bornés à -100..100, clés inconnues ignorées."""
+    out = {}
+    for key in ADJUST_KEYS:
+        try:
+            value = int(round(float((adjust or {}).get(key, 0))))
+        except (TypeError, ValueError):
+            value = 0
+        out[key] = max(-100, min(100, value))
+    return out
+
+
+def _apply_adjust(rgb: np.ndarray, mask: np.ndarray | None, adjust: dict) -> None:
+    """Luminosité, contraste, saturation, vibrance, en place.
+
+    Avec un masque, seul le premier plan est modifié (fondu selon l opacité du masque) :
+    l arrière-plan reste strictement identique."""
+    adj = clean_adjust(adjust)
+    b, c, s, v = (adj[k] / 100.0 for k in ADJUST_KEYS)
+    if not (b or c or s or v):
+        return
+    y0, y1 = 0, rgb.shape[0]
+    if mask is not None:
+        rows = np.flatnonzero(mask.any(axis=1))
+        if rows.size == 0:
+            return
+        y0, y1 = int(rows[0]), int(rows[-1]) + 1
+    luma = np.array(LUMA, dtype=np.float32)
+    for top in range(y0, y1, ADJUST_STRIP):
+        rows = slice(top, min(top + ADJUST_STRIP, y1))
+        src = rgb[rows].astype(np.float32) / 255.0
+        out = src * (1.0 + BRIGHTNESS_GAIN * b) if b else src
+        if c:
+            out = (out - 0.5) * (1.0 + CONTRAST_GAIN * c) + 0.5
+        if s or v:
+            gray = (out @ luma)[..., np.newaxis]
+            factor = 1.0 + s
+            if v:
+                # Vibrance : agit surtout sur les couleurs ternes, épargne les teintes déjà saturées
+                mx, mn = out.max(axis=2, keepdims=True), out.min(axis=2, keepdims=True)
+                sat = np.clip((mx - mn) / np.maximum(mx, 1e-4), 0.0, 1.0)
+                factor = factor * (1.0 + v * (1.0 - sat))
+            out = gray + (out - gray) * factor
+        out = np.clip(out, 0.0, 1.0)
+        if mask is not None:
+            m = (mask[rows].astype(np.float32) / 255.0)[..., np.newaxis]
+            out = src + (out - src) * m
+        rgb[rows] = (out * 255.0 + 0.5).astype(np.uint8)
+
+
+def _apply_edits(rgb: np.ndarray, edits: list | None, scale: float) -> None:
+    h, w = rgb.shape[:2]
+    for edit in edits or []:
+        pts = [[min(max(int(round(p[0] * scale)), 0), w - 1),
+                min(max(int(round(p[1] * scale)), 0), h - 1)] for p in edit.get("polygon", [])]
+        if len(pts) < 3:
+            continue
+        if edit.get("style") == "white":
+            _white_polygon(rgb, pts)
+        else:
+            _blur_polygon(rgb, pts, edit.get("strength", 3))
+
+
+def render_layers(layers: Layers, edits: list | None, adjust: dict | None) -> Image.Image:
+    """Rejoue les retouches manuelles puis les réglages sur une copie du maître."""
+    rgb = layers.rgb.copy()
+    _apply_edits(rgb, edits, layers.scale)
+    _apply_adjust(rgb, layers.fg_mask, adjust or {})
+    if layers.alpha is not None:
+        return Image.fromarray(np.dstack([rgb, layers.alpha]))
+    return Image.fromarray(rgb)
+
+
+def encode_image(img: Image.Image, fmt: str, quality: int = 92, icc: bytes | None = None) -> bytes:
+    """Encode en jpeg, png ou webp. Un JPEG ne porte pas de transparence : aplati sur blanc."""
+    buf = io.BytesIO()
+    extra = {"icc_profile": icc} if icc else {}
+    if fmt == "jpeg":
+        if img.mode == "RGBA":
+            flat = Image.new("RGB", img.size, (255, 255, 255))
+            flat.paste(img, mask=img.getchannel("A"))
+            img = flat
+        img.convert("RGB").save(buf, "JPEG", quality=quality, optimize=True, progressive=True, **extra)
+    elif fmt == "webp":
+        img.save(buf, "WEBP", quality=quality, method=4, **extra)
+    elif fmt == "png":
+        img.save(buf, "PNG", **extra)
+    else:
+        raise ValueError("format inconnu : " + str(fmt))
+    return buf.getvalue()
+
+
+def make_thumb(img: Image.Image) -> bytes:
+    """Vignette WebP (conserve la transparence) pour la grille de résultats."""
+    thumb = img.copy()
+    thumb.thumbnail((THUMB_SIDE, THUMB_SIDE), Image.BILINEAR)
+    buf = io.BytesIO()
+    thumb.save(buf, "WEBP", quality=80, method=2)
+    return buf.getvalue()
+
+
+# ------------------------- Réglage automatique ----------------------------
+def foreground_stats(layers: Layers, step: int = 1) -> dict | None:
+    """Mesures du premier plan : luminosité médiane, étendue tonale, saturation moyenne.
+
+    step > 1 : un pixel sur step dans chaque direction (mesure rapide sur une grande image)."""
+    rgb = layers.rgb[::step, ::step].astype(np.float32) / 255.0
+    if layers.fg_mask is not None:
+        rgb = rgb[layers.fg_mask[::step, ::step] > 127]
+    else:
+        rgb = rgb.reshape(-1, 3)
+    if rgb.shape[0] < 50:
+        return None
+    lum = rgb @ np.array(LUMA, dtype=np.float32)
+    p5, p50, p95 = (float(x) for x in np.percentile(lum, (5, 50, 95)))
+    mx, mn = rgb.max(axis=1), rgb.min(axis=1)
+    return {"lum": p50, "spread": max(p95 - p5, 1e-3), "sat": float((mx - mn).mean())}
+
+
+def auto_adjust(stats: list[dict | None]) -> list[dict]:
+    """Réglages qui rapprochent chaque image de la médiane du lot, pour un ensemble cohérent.
+
+    Correction volontairement partielle et plafonnée : une voiture noire et une voiture blanche
+    ne doivent pas finir de la même teinte, seul l écart d exposition entre photos est réduit."""
+    valid = [s for s in stats if s]
+    if not valid:
+        return [clean_adjust(None) for _ in stats]
+    target = {k: float(np.median([s[k] for s in valid])) for k in ("lum", "spread", "sat")}
+    # Un lot uniformément sombre ou terne est aussi ramené vers une exposition correcte
+    target["lum"] = 0.5 * target["lum"] + 0.5 * min(max(target["lum"], 0.42), 0.55)
+    target["spread"] = max(target["spread"], 0.55)
+    out = []
+    for s in stats:
+        if not s:
+            out.append(clean_adjust(None))
+            continue
+        gain = 1.0 + AUTO_STRENGTH * (target["spread"] / s["spread"] - 1.0)
+        c = min(max((gain - 1.0) / CONTRAST_GAIN, -AUTO_LIMIT), AUTO_LIMIT)
+        gain = 1.0 + CONTRAST_GAIN * c
+        wanted = s["lum"] + AUTO_STRENGTH * (target["lum"] - s["lum"])
+        before_contrast = (wanted - 0.5) / gain + 0.5
+        b = min(max((before_contrast / max(s["lum"], 0.02) - 1.0) / BRIGHTNESS_GAIN, -AUTO_LIMIT), AUTO_LIMIT)
+        sat = 0.0
+        if s["sat"] > 0.06 and target["sat"] > 0.06:  # carrosseries grises, blanches, noires : couleur intacte
+            sat = min(max(AUTO_STRENGTH * (target["sat"] / s["sat"] - 1.0), -AUTO_LIMIT), AUTO_LIMIT)
+        out.append(clean_adjust({"brightness": b * 100, "contrast": c * 100,
+                                 "saturation": 0, "vibrance": sat * 100}))
+    return out

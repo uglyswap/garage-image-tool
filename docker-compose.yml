@@ -4,14 +4,19 @@ services:
     image: garage-image-tool:latest
     container_name: garage-image-tool
     ports:
-      - "8000:8000"
+      # BIND_ADDR=127.0.0.1 (ou l'adresse interne du pont Docker) derriere un reverse proxy HTTPS
+      - "${BIND_ADDR:-0.0.0.0}:${PORT:-8000}:8000"
     environment:
-      MAX_WORKERS: "1"          # workers CPU paralleles (rembg/onnxruntime)
+      MAX_WORKERS: "${MAX_WORKERS:-1}"  # workers CPU paralleles (rembg/onnxruntime)
       DATA_DIR: /data
       MODELS_DIR: /app/models
       APP_PASSWORD: ${APP_PASSWORD:-}   # vide = acces ouvert (deconseille) ; definissez-le dans .env
+      TRUSTED_PROXY: "${TRUSTED_PROXY:-0}"  # 1 uniquement derriere un reverse proxy de confiance
     volumes:
       - garage-data:/data       # fonds enregistres + resultats temporaires
+    # BiRefNet monte a ~6 Go par image : au-dela du plafond, seul ce conteneur est arrete
+    mem_limit: ${MEMORY_LIMIT:-8g}
+    memswap_limit: ${MEMORY_LIMIT:-8g}
     restart: unless-stopped
 
 volumes:
